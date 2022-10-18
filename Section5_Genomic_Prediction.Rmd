@@ -1,0 +1,501 @@
+---
+title: "Section5 Genomic Prediction"
+author: "Ye Bi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/OneDrive - Virginia Tech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction")
+path.met = "../../Pheno"
+path.trait = "../../Trait"
+path.output = "./outputs"
+path.geno = "../../Geno"
+```
+
+### Loading packages
+```{r, message=F}
+library(rrBLUP)
+library(BGLR)
+library(ggplot2)
+library(ggpubr)
+library(tidyverse)
+```
+
+# 1. loading data
+## 1.1 Read met data
+```{r, echo = T, eval = T}
+met.con <- read.csv(file=file.path(path.met, "met.rr.con.csv")) #192*75
+met.trt <- read.csv(file=file.path(path.met, "met.rr.trt.csv")) #188*75
+```
+
+## 1.2 Trait data: Major axis, Minor axis and  Perimeter data
+```{r, echo = TRUE, eval = T}
+load(file = file.path(path.trait, "trait.con.Rdata"))
+load(file = file.path(path.trait, "trait.trt.Rdata"))
+trait.con$NSFTV_ID <- as.factor(trait.con$NSFTV_ID)
+trait.trt$NSFTV_ID <- as.factor(trait.trt$NSFTV_ID)
+```
+## 1.3 Read SNP data
+```{r, eval = F}
+load(file=file.path(path.geno, "geno.rr.con.RData")) # 192 385118
+load(file=file.path(path.geno, "geno.rr.trt.RData")) # 188 389854
+```
+
+
+# 2. Prediction for control
+## 2.1 GBLUP and GMBLUP
+```{r, echo=T, eval=F}
+# Scale traits (Normalize)
+y0 = scale(trait.con[,-c(1:2)], center = T, scale = T)
+
+# G matrix
+Gcs = scale(geno_con, center = T, scale = T)
+Gchnt = tcrossprod(Gcs)/ncol(Gcs)
+EVD_Gchnt <- eigen(Gchnt)
+
+# M matrix
+# M matrix 
+
+rownames(met.con) = met.con$NSFTV_ID
+Mcs = scale(met.con[,-c(1:2)]) 
+Mchnt = tcrossprod(Mcs) # for Bayesian MBLUP
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+
+#GBLUP
+ETA1 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS')
+   )
+
+#MBLUP
+ETA2 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+#GMBLUP
+ETA3 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS'),
+    MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+# set cross-validation parameters
+ntst  <-  38 # test 192*0.2
+ntrn  <- 192-38 # reference 192*0.8
+nCV <- 100 # times of CV
+
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+# predictive correlation
+corR1 <- matrix(0, ncol = ncol(y0), nrow = nCV) #OLS
+  colnames(corR1) = traits
+corR2 <- matrix(0, ncol = ncol(y0), nrow = nCV) #MBLUP
+  colnames(corR2) = traits
+corR3 <- matrix(0, ncol = ncol(y0), nrow = nCV) #BayesC
+  colnames(corR3) = traits
+
+# CV
+for (i in 1:nCV) {
+  # i=1
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+  #GBLUP
+  fit1 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+             burnIn = 10000, thin = 5, verbose = F, saveAt = 'GBLUP_')
+  pred1 = fit1$yHat
+  corR1[i,j] <- cor(pred1[index], y0[index,j])
+  
+  
+  #GMBLUP
+  fit3 <- BGLR(y=ySingle, ETA=ETA3, nIter = 30000,
+             burnIn = 10000, thin = 5, verbose = F, saveAt = 'GMBLUP_')
+  pred3 = fit3$yHat
+  corR3[i,j] <- cor(pred3[index], y0[index,j])
+  }}
+
+save(corR1, corR3, file=file.path(path.output, "control_GBLUP_GMBLUP.rda"))
+```
+
+### 2.1.1 Calculate colmean
+```{r}
+load(file=file.path(path.output, "control_GBLUP_GMBLUP.rda"))
+colnames(corR1) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR1), digits = 4) #GBLUP
+
+# colnames(corR2) = c("Major_Axis", "Minor_Axis", "Perimeter")
+# round(colMeans(corR2), digits = 4)#MBLUP
+
+colnames(corR3) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR3), digits = 4) #GMBLUP
+```
+
+### 2.1.2 Heritability
+```{r, echo=TRUE, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.con[,-c(1:2)], center = T, scale = T)
+
+# G matrix
+Gcs = scale(geno_con, center = T, scale = T)
+Gchnt = tcrossprod(Gcs)/ncol(Gcs)
+EVD_Gchnt <- eigen(Gchnt)
+
+# M matrix
+# M matrix 
+Mcs = scale(met.con[,-c(1:2)]) #since met.rr was scaled when I did BLUP correction, so here no necessary to double normalization.
+Mchnt = tcrossprod(Mcs) # for Bayesian MBLUP
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+
+#GBLUP
+ETA1 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS')
+   )
+
+#MBLUP
+ETA2 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+#GMBLUP
+ETA3 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS'),
+    MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+
+
+for (j in 1:3){
+  cat("Now running trait: ", colnames(y0)[j], "\n")
+  set.seed(100+j)
+  ySingle <- y0[,j]
+  #GBLUP
+  fit1 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  
+  varE = fit1$varE
+  varM = fit1$ETA$G$varU
+  h2M = varM/(varM+varE)
+  cat("fit1 heritability for genomics is: ", round(h2M, 4), "\n")
+  
+  # MBLUP
+  fit2 <- BGLR(y=ySingle, ETA=ETA2, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  varE = fit2$varE
+  varM = fit2$ETA$MET$varU
+  h2M = varM/(varM+varE)
+  cat("fit2 heritability for metabolites is: ", round(h2M,4), "\n")
+  
+  #GMBLUP
+  fit3 <- BGLR(y=ySingle, ETA=ETA3, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  varE = fit3$varE
+  varM = fit3$ETA$MET$varU
+  varG = fit3$ETA$G$varU
+  h2G = varG/(varG+varM+varE)
+  cat("fit3 heritability for genomics is: ", round(h2G,4), "\n")
+  h2M= varM/(varG+varE+varM)
+  cat("fit3 heritability for metabolites is: ", round(h2M,4), "\n")
+  }
+```
+Now running trait:  MajorAxis 
+fit1 heritability for genomics is:  0.7836 
+fit2 heritability for metabolites is:  0.3254 
+fit3 heritability for genomics is:  0.6988 
+fit3 heritability for metabolites is:  0.0893 
+Now running trait:  MinorAxis 
+fit1 heritability for genomics is:  0.7545 
+fit2 heritability for metabolites is:  0.4351 
+fit3 heritability for genomics is:  0.6312 
+fit3 heritability for metabolites is:  0.1336 
+Now running trait:  Perimeter 
+fit1 heritability for genomics is:  0.7533 
+fit2 heritability for metabolites is:  0.3307 
+fit3 heritability for genomics is:  0.6257 
+fit3 heritability for metabolites is:  0.1167 
+
+
+# 3. Prediction for stress
+## 3.1  GBLUP and GMBLUP
+```{r, echo=T, eval=F}
+# Scale traits (Normalize)
+y0 = scale(trait.trt[,-c(1:2)], center = T, scale = T)
+
+# G matrix
+Gcs = scale(geno_trt, center = T, scale = T)
+Gchnt = tcrossprod(Gcs)/ncol(Gcs)
+EVD_Gchnt <- eigen(Gchnt)
+
+# M matrix
+# M matrix 
+Mcs = scale(met.trt[,-c(1:2)]) 
+Mchnt = tcrossprod(Mcs) # for Bayesian MBLUP
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+
+#GBLUP
+ETA1 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS')
+   )
+
+#MBLUP
+ETA2 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+#GMBLUP
+ETA3 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS'),
+    MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+# set cross-validation parameters
+ntst  <-  38 # test 188*0.2
+ntrn  <- 188-38 # reference 188*0.8
+nCV <- 100 # times of CV
+
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+# predictive correlation
+corR1 <- matrix(0, ncol = ncol(y0), nrow = nCV) #OLS
+  colnames(corR1) = traits
+
+corR3 <- matrix(0, ncol = ncol(y0), nrow = nCV) #BayesC
+  colnames(corR3) = traits
+
+# CV
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+  #GBLUP
+  fit1 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+             burnIn = 10000, thin = 5, verbose = F, saveAt = 'GBLUP_')
+  pred1 = fit1$yHat
+  corR1[i,j] <- cor(pred1[index], y0[index,j])
+  
+  
+  #GMBLUP
+  fit3 <- BGLR(y=ySingle, ETA=ETA3, nIter = 30000,
+             burnIn = 10000, thin = 5, verbose = F, saveAt = 'GMBLUP_')
+  pred3 = fit3$yHat
+  corR3[i,j] <- cor(pred3[index], y0[index,j])
+  }}
+
+save(corR1, corR3, file=file.path(path.output, "stress_GBLUP_GMBLUP.rda"))
+```
+
+### 3.1.1 Calculate colmean
+```{r}
+load(file=file.path(path.output, "stress_GBLUP_GMBLUP.rda"))
+
+colnames(corR1) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR1), digits = 4) #GBLUP
+
+# colnames(corR2) = c("Major_Axis", "Minor_Axis", "Perimeter")
+# round(colMeans(corR2), digits = 4)#MBLUP
+
+colnames(corR3) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR3), digits = 4) #GMBLUP
+```
+
+### 3.1.2 Heritability
+```{r, echo=TRUE, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.trt[,-c(1:2)], center = T, scale = T)
+
+# G matrix
+Gcs = scale(geno_trt, center = T, scale = T)
+Gchnt = tcrossprod(Gcs)/ncol(Gcs)
+EVD_Gchnt <- eigen(Gchnt)
+
+# M matrix
+# M matrix 
+Mcs = scale(met.trt[,-c(1:2)]) #since met.rr was scaled when I did BLUP correction, so here no necessary to double normalization.
+Mchnt = tcrossprod(Mcs) # for Bayesian MBLUP
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+
+#GBLUP
+ETA1 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS')
+   )
+
+#MBLUP
+ETA2 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+#GMBLUP
+ETA3 <- list(
+    G = list(V=EVD_Gchnt$vectors, d=EVD_Gchnt$values, model='RKHS'),
+    MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+   )
+
+
+
+for (j in 1:3){
+  cat("Now running trait: ", colnames(y0)[j], "\n")
+  set.seed(100+j)
+  ySingle <- y0[,j]
+  #GBLUP
+  fit1 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  
+  varE = fit1$varE
+  varM = fit1$ETA$G$varU
+  h2M = varM/(varM+varE)
+  cat("fit1 heritability for genomics is: ", round(h2M, 4), "\n")
+  
+  # MBLUP
+  fit2 <- BGLR(y=ySingle, ETA=ETA2, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  varE = fit2$varE
+  varM = fit2$ETA$MET$varU
+  h2M = varM/(varM+varE)
+  cat("fit2 heritability for metabolites is: ", round(h2M,4), "\n")
+  
+  #GMBLUP
+  fit3 <- BGLR(y=ySingle, ETA=ETA3, nIter = 30000, 
+             burnIn = 10000, thin = 5, verbose = F)
+  varE = fit3$varE
+  varM = fit3$ETA$MET$varU
+  varG = fit3$ETA$G$varU
+  h2G = varG/(varG+varM+varE)
+  cat("fit3 heritability for genomics is: ", round(h2G,4), "\n")
+  h2M= varM/(varG+varE+varM)
+  cat("fit3 heritability for metabolites is: ", round(h2M,4), "\n")
+  }
+```
+
+# 4. Draw plots
+```{r}
+######################################
+###loading MBLUP and GBLUP GMBLUP#####
+######################################
+
+load(file=file.path(path.output, "control_OLS_MBLUP_BayesC.rda"))
+corR_MBLUP_con = corR2
+load(file=file.path(path.output, "control_GBLUP_GMBLUP.rda"))
+corR_GBLUP_con = corR1
+corR_GMBLUP_con = corR3
+
+load(file=file.path(path.output, "stress_OLS_MBLUP_BayesC.rda"))
+corR_MBLUP_trt = corR2
+load(file=file.path(path.output, "stress_GBLUP_GMBLUP.rda"))
+corR_GBLUP_trt = corR1
+corR_GMBLUP_trt = corR3
+
+###############################################
+## Percentage Compare GBLUP, GMBLUP, MBLUP#####
+###############################################
+
+GBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_GBLUP_con),cbind.data.frame(Treatment = "Stress", corR_GBLUP_trt))
+MBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_MBLUP_con),cbind.data.frame(Treatment = "Stress", corR_MBLUP_trt))
+GMBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_GMBLUP_con),cbind.data.frame(Treatment = "Stress", corR_GMBLUP_trt))
+traits = c("MajorAxis", "MinorAxis", "Perimeter")
+# labels = c("  Grain length", "  Grain width", "Grain perimeter")
+m=1
+traitL <- list()
+for( i in traits){
+
+    BLUPcorR <- data.frame(GBLUP[,c("Treatment",i)], MBLUP[, i], GMBLUP[,i])
+    BLUPcorR$Treatment <- as.factor(BLUPcorR$Treatment)
+    colnames(BLUPcorR) <- c("Treatment", "GBLUP", "MBLUP", "GMBLUP")
+    models <- c( "MBLUP", "GMBLUP", "GBLUP")
+    comb_mol <- matrix(c("GBLUP", "MBLUP", "MBLUP", "GMBLUP", "GBLUP", "GMBLUP"), 2, 3)
+    comb_mol_con <- rbind.data.frame(comb_mol, NA)
+    comb_mol_trt <- rbind.data.frame(comb_mol, NA) #first row - second rw.
+
+
+    BLUPcorR_con <- BLUPcorR %>% filter(Treatment == "Control")
+    BLUPcorR_trt <- BLUPcorR %>% filter(Treatment == "Stress")
+
+    for (j in 1:3){
+      # j=1
+      x=comb_mol[1,j]
+      y=comb_mol[2,j]
+      comb_mol_con[3,j] <- sum(BLUPcorR_con[,x]-BLUPcorR_con[,y]>0)
+      comb_mol_trt[3,j] <- sum(BLUPcorR_trt[,x]-BLUPcorR_trt[,y]>0)
+
+    }
+
+    traitL[[m]] <- list(control = comb_mol_con, stress = comb_mol_trt)
+    m = m+1
+
+}
+
+names(traitL) <- traits
+GtraitL <- traitL
+save(GtraitL, file="./compare_genomic_models_percentage.Rdata")
+
+
+load("./compare_genomic_models_percentage.Rdata")
+
+####################
+## Draw plots#######
+####################
+
+
+GBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_GBLUP_con),cbind.data.frame(Treatment = "Stress", corR_GBLUP_trt))
+MBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_MBLUP_con),cbind.data.frame(Treatment = "Stress", corR_MBLUP_trt))
+GMBLUP <- rbind(cbind.data.frame(Treatment = "Control", corR_GMBLUP_con),cbind.data.frame(Treatment = "Stress", corR_GMBLUP_trt))
+traits = c("MajorAxis", "MinorAxis", "Perimeter")
+labels = c("  Grain length", "  Grain width", "Grain perimeter")
+
+pp <- list()
+t=1
+for( i in traits){
+    
+    BLUPcorR <- data.frame(GBLUP[,c("Treatment",i)], MBLUP[, i], GMBLUP[,i])
+    BLUPcorR$Treatment <- as.factor(BLUPcorR$Treatment)
+    colnames(BLUPcorR) <- c("Treatment", "GBLUP", "MBLUP", "GMBLUP")
+    models <- c( "MBLUP", "GMBLUP", "GBLUP")
+    comb_mol <- matrix(c("GBLUP", "MBLUP", "MBLUP", "GMBLUP", "GBLUP", "GMBLUP"), 2, 3)
+    
+    temp = GtraitL[[i]]
+    p=list()
+    aa=array()
+
+    for (j in 1:3){
+      BLUPcorR$Treatment <- rep(c(paste0("Control: ", temp$control[3, j],"%"), paste0("HNT: ", temp$stress[3, j], "%")), each =100)
+      p[[j]] <- ggplot(data = BLUPcorR, aes_string(comb_mol[1,j],comb_mol[2,j])) + 
+                coord_fixed() +
+                scale_x_continuous(limits=c(-0.2, 0.9), breaks=c(-0.2,0,0.2,0.4,0.6,0.8)) +
+                scale_y_continuous(limits=c(-0.2, 0.9), breaks=c(-0.2,0,0.2,0.4,0.6,0.8)) +
+
+                geom_point(size=2, alpha=0.5, aes(colour=Treatment)) + 
+                geom_abline(intercept = 0, slope = 1)  + theme_bw() +
+                labs(x=comb_mol[1,j],y=comb_mol[2,j])+
+        
+                theme(legend.position=c(0.815,0.08))+
+                # scale_color_discrete(name="") +
+                theme(legend.key.size = unit(0.01, "cm"), legend.title = element_blank())+
+                theme(legend.background = element_rect(fill="aliceblue"))+
+                theme(legend.text = element_text(size=10, face="bold"))
+      # print(p[[j]])
+    }
+    
+  # plot_Ave <- ggarrange(p[[1]],p[[2]],p[[3]], labels=i, nrow = 1, ncol = 3, common.legend = F)
+  # print(plot_Ave)
+  pp[[t]] <- ggarrange(p[[1]],p[[2]],p[[3]], labels=labels[t], nrow = 1, ncol = 3, common.legend = F) 
+  t=t+1
+# dev.print(pdf, file = file.path(path.output, paste0(i,"_GBLUP_MBLUP_GMBLUP_comb.pdf")), height = 5, width = 12)
+
+ 
+}
+
+plot1 <- ggarrange(pp[[1]],pp[[2]],pp[[3]], nrow = 3, ncol = 1)
+print(plot1)
+dev.print(pdf, file = file.path(path.output, "GBLUP_MBLUP_GMBLUP_comb.pdf"), height = 14, width = 12)
+```
