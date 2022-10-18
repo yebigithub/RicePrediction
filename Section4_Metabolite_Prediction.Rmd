@@ -1,0 +1,741 @@
+---
+title: "Section4 Metabolite Prediction"
+author: "Ye Bi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "~/OneDrive - Virginia Tech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/Prediction")
+knitr::opts_chunk$set(echo = TRUE)
+path.met = "../../Pheno"
+path.trait = "../../Trait"
+path.output = "./outputs"
+```
+
+# Loading packages
+```{r, message=F}
+library(rrBLUP)
+library(BGLR)
+library(ggplot2)
+library(ggpubr)
+library(tidyverse)
+```
+
+# 1. loading data
+## 1.1 Read met data
+```{r, echo = T, eval = T}
+met.con <- read.csv(file=file.path(path.met, "met.rr.con.csv")) #192*75
+met.trt <- read.csv(file=file.path(path.met, "met.rr.trt.csv")) #188*75
+
+met.con.over <- met.con[met.con$NSFTV_ID %in% met.trt$NSFTV_ID, ] #161 * 75
+met.trt.over <- met.trt[met.trt$NSFTV_ID %in% met.con$NSFTV_ID, ] # 161*75
+```
+
+## 1.2 Trait data: Major axis, Minor axis and  Perimeter data
+```{r, echo = TRUE, eval = T}
+load(file = file.path(path.trait, "trait.con.Rdata"))
+load(file = file.path(path.trait, "trait.trt.Rdata"))
+
+trait.con.over <- trait.con[trait.con$NSFTV_ID %in% met.con.over$NSFTV_ID, ]
+trait.trt.over <- trait.trt[trait.trt$NSFTV_ID %in% met.trt.over$NSFTV_ID, ]
+# all(trait.con.over$NSFTV_ID == trait.trt.over$NSFTV_ID)
+# all(trait.con.over$NSFTV_ID == met.trt.over$NSFTV_ID)
+```
+
+# 2. MOLS, MBLUP, MBayesC
+## 2.1 Prediction for control group
+```{r, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.con[,-c(1:2)], center = T, scale = T)
+
+# M matrix 
+Mcs = scale(met.con[,-c(1:2)]) 
+Mchnt = tcrossprod(Mcs) 
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+# For MBLUP
+    ETA1 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+       )
+# For BayesC
+    ETA2 <- list(
+        MET = list(X = Mcs, model = 'BayesC')
+       )
+
+# set cross-validation parameters
+ntst  <-  38 # test 192*0.2
+ntrn  <- 192-38 # reference 192*0.8
+nCV <- 100 # times of CV
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+# predictive correlation
+corR1 <- matrix(0, ncol = ncol(y0), nrow = nCV) #MOLS
+  colnames(corR1) = traits
+corR2 <- matrix(0, ncol = ncol(y0), nrow = nCV) #MBLUP
+  colnames(corR2) = traits
+corR3 <- matrix(0, ncol = ncol(y0), nrow = nCV) #BayesC
+  colnames(corR3) = traits
+
+# CV
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+  #MOLS
+      formu = paste("y~1+", paste(colnames(met.con)[-c(1:2)], collapse = "+"),sep="")
+      data01 = cbind.data.frame(Mcs,y = ySingle)
+      fit1 <- lm(formu, data=data01)
+      pred <- predict(fit1, as.data.frame(Mcs[index,]))
+      corR1[i,j] <- cor(pred, y0[index,j])
+
+  #MBLUP
+      fit2 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      pred = fit2$yHat
+      corR2[i,j] <- cor(pred[index], y0[index,j])
+  # 
+  # #Bayes C
+      fit3 <- BGLR(y=ySingle, ETA=ETA2, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      # pred0 = Mcs %*% fit3$ETA$MET$b + fit3$mu
+      pred = fit3$yHat
+      corR3[i,j] <- cor(pred[index], y0[index,j])
+  }
+  }
+
+save(corR1, corR2, corR3, file=file.path(path.output, "control_OLS_MBLUP_BayesC.rda"))
+```
+
+
+### 2.1.1 Calculate colmean
+```{r}
+load(file=file.path(path.output, "control_OLS_MBLUP_BayesC.rda"))
+colnames(corR1) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR1), digits = 4) #OLS
+
+colnames(corR2) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR2), digits = 4)#MBLUP
+
+colnames(corR3) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR3), digits = 4) #BayesC
+```
+
+
+## 2.2 Prediction for stress group
+```{r, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.trt[,-c(1:2)], center = T, scale = T)
+
+# M matrix 
+Mcs = scale(met.trt[,-c(1:2)])
+Mchnt = tcrossprod(Mcs) 
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+# For MBLUP
+    ETA1 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+       )
+# For BayesC
+    ETA2 <- list(
+        MET = list(X = Mcs, model = 'BayesC')
+       )
+
+# set cross-validation parameters
+ntst  <-  38 # test 188*0.2
+ntrn  <- 188-38 # reference 188*0.8
+nCV <- 100 # times of CV
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+# predictive correlation
+corR1 <- matrix(0, ncol = ncol(y0), nrow = nCV) #MOLS
+  colnames(corR1) = traits
+corR2 <- matrix(0, ncol = ncol(y0), nrow = nCV) #MBLUP
+  colnames(corR2) = traits
+corR3 <- matrix(0, ncol = ncol(y0), nrow = nCV) #BayesC
+  colnames(corR3) = traits
+
+# CV
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+  #MOLS
+      formu = paste("y~1+", paste(colnames(met.trt)[-c(1:2)], collapse = "+"),sep="")
+      data01 = cbind.data.frame(Mcs,y = ySingle)
+      fit1 <- lm(formu, data=data01)
+      pred <- predict(fit1, as.data.frame(Mcs[index,]))
+      corR1[i,j] <- cor(pred, y0[index,j])
+
+  #MBLUP
+      fit2 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      pred = fit2$yHat
+      corR2[i,j] <- cor(pred[index], y0[index,j])
+  # 
+  # #Bayes C
+      fit3 <- BGLR(y=ySingle, ETA=ETA2, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      # pred0 = Mcs %*% fit3$ETA$MET$b + fit3$mu
+      pred = fit3$yHat
+      corR3[i,j] <- cor(pred[index], y0[index,j])
+  }}
+
+save(corR1, corR2, corR3, file=file.path(path.output, "stress_OLS_MBLUP_BayesC.rda"))
+```
+
+### 2.2.1 Calculate colmean
+```{r}
+load(file=file.path(path.output, "stress_OLS_MBLUP_BayesC.rda"))
+colnames(corR1) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR1), digits = 4) #OLS
+
+colnames(corR2) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR2), digits = 4)#MBLUP
+
+colnames(corR3) = c("Major_Axis", "Minor_Axis", "Perimeter")
+round(colMeans(corR3), digits = 4) #BayesC
+```
+
+# 3. Machine learning models: SVR, RF, XGBoost
+## 3.1 Corss-validation dataset building
+```{r}
+path.met = "../../../Pheno"
+path.trait = "../../../Trait"
+# 1. loading data
+## 1.1 Read met data
+met.con <- read.csv(file=file.path(path.met, "met.rr.con.csv")) #192*75
+met.trt <- read.csv(file=file.path(path.met, "met.rr.trt.csv")) #188*75
+
+## 1.2 Trait data: Major axis, Minor axis and  Perimeter data
+load(file = file.path(path.trait, "trait.con.Rdata"))
+load(file = file.path(path.trait, "trait.trt.Rdata"))
+# table(met.con$NSFTV_ID == trait.con$NSFTV_ID) #they are in same order, so combine together.
+trait_met.con = merge(met.con, trait.con)
+trait_met.trt = merge(met.trt, trait.trt)
+
+comb <- rbind.data.frame(trait_met.con, trait_met.trt)
+# set cross-validation parameters
+ntst  <-  38 # testing 192*0.2
+ntrn  <-  192-38 # training 
+ntrn_trt <- 188-38
+nCV <- 100 # times of CV
+
+# Cross-Validation
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  cat("Now running nCV = ", i, "\n")
+  #i = 1
+  con = trait_met.con
+  trt = trait_met.trt
+  set.seed(100 + i)
+  test.ix.con <- sample(1:nrow(con), size=ntst) # random sampling 38
+  train.ix.con = setdiff(1:nrow(con), test.ix.con) #154
+  test.ix.trt <-  sample(1:nrow(trt), size=ntst) 
+  train.ix.trt = setdiff(1:nrow(trt), test.ix.trt) #150
+  test = rbind.data.frame(con[test.ix.con,], trt[test.ix.trt,])
+  train = rbind.data.frame(con[train.ix.con,], trt[train.ix.trt,])
+
+  train$set = "train"
+  test$set = "test"
+  table(test$Treatment); table(train$Treatment) 
+  cv = rbind.data.frame(train, test)
+  cv = cv %>% arrange(Treatment, NSFTV_ID, by_group = T)
+  table(cv[,1:2] == comb[,1:2])
+  dir.create(paste0("./CrossValidation/cv_",i))
+  write.csv(cv, paste0("./CrossValidation/cv_",i,"/met_trait_scale_",i,".csv"), row.names = F, quote = F)
+}
+```
+
+## 3.2 SVR
+```{r}
+# 5-fold with no repeat
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = F)
+# no cross validation
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = F)
+
+
+traits = c("MajorAxis","MinorAxis", "Perimeter")
+treatments = c("control", "stress")
+CorL_svm = list()
+met=list()
+for(i in 1:100){
+  #i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_trait_scale_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+ 
+    ## valid set
+    met_vali_control0 <- met %>% filter(Treatment == "Control" & set == "train") %>% droplevels()
+    met_vali_control <- met_vali_control0[,-c(1,2,79)] 
+    # colnames(met_vali_control)
+    
+    ## test set
+    met_test_control0 <- met %>% filter(Treatment == "Control" & set == "test") %>% droplevels()
+    met_test_control <- met_test_control0[,-c(1,2,79)]
+    
+    ## valid set
+    met_vali_stress0 <- met %>% filter(Treatment == "Stress" & set == "train") %>% droplevels()
+    met_vali_stress <- met_vali_stress0[,-c(1,2,79)] 
+    
+    ## test set
+    met_test_stress0 <- met %>% filter(Treatment == "Stress" & set == "test") %>% droplevels()
+    met_test_stress <- met_test_stress0[,-c(1,2,79)]
+    # all(met_vali_control0$NSFTV.Id == met_vali_stress0$NSFTV.Id)
+    
+    met_valiL <- list(control = met_vali_control, stress = met_vali_stress)
+    met_testL <- list(control = met_test_control, stress = met_test_stress)
+
+      corr = matrix(nrow=2, ncol=3, dimnames = list(treatments, traits))
+      for(k in treatments){
+        for(j in traits){
+          hyper <- svm9_func(trait = j, treatment = k, method = train_control)
+          data0 = cbind(met_valiL[[k]][,c(1:73)], trait0 = met_valiL[[k]][,j])
+          svm9 <- caret::train(trait0~. , 
+                                 data=data0, 
+                                 method="svmRadialSigma", 
+                                 trControl=train_control0,
+                                 tuneGrid = expand.grid(C=hyper[[2]], sigma=hyper[[1]]))
+          
+          # treatment = "control"
+          pred = predict(svm9, met_testL[[k]][1:73])
+          # table(ytest, pred)
+          corr[k,j] = cor(pred, met_testL[[k]][,j])
+        }
+      }
+        
+      CorL_svm[[i]] = corr
+    
+}
+save(CorL_svm, file = "./outputs/CorL_svm100.Rdata")
+```
+
+## 3.3 RF
+```{r, eval=F}
+# 5-fold with no repeat
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = F)
+# no cross validation
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = F)
+
+traits = c("MajorAxis","MinorAxis", "Perimeter")
+treatments = c("control", "stress")
+CorL_rf = list()
+met=list()
+for(i in 1:100){
+  #i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_trait_scale_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+ 
+    ## valid set
+    met_vali_control0 <- met %>% filter(Treatment == "Control" & set == "train") %>% droplevels()
+    met_vali_control <- met_vali_control0[,-c(1,2,79)] 
+    # colnames(met_vali_control)
+    
+    ## test set
+    met_test_control0 <- met %>% filter(Treatment == "Control" & set == "test") %>% droplevels()
+    met_test_control <- met_test_control0[,-c(1,2,79)]
+    
+    ## valid set
+    met_vali_stress0 <- met %>% filter(Treatment == "Stress" & set == "train") %>% droplevels()
+    met_vali_stress <- met_vali_stress0[,-c(1,2,79)] 
+    
+    ## test set
+    met_test_stress0 <- met %>% filter(Treatment == "Stress" & set == "test") %>% droplevels()
+    met_test_stress <- met_test_stress0[,-c(1,2,79)]
+    # all(met_vali_control0$NSFTV_ID == met_vali_stress0$NSFTV_ID)
+    
+    met_valiL <- list(control = met_vali_control, stress = met_vali_stress)
+    met_testL <- list(control = met_test_control, stress = met_test_stress)
+
+              corL = matrix(nrow=2, ncol=3, dimnames = list(treatments, traits))
+              for(k in treatments){
+                for(j in traits){
+                  hyper <- rf_func(trait = j, treatment = k, method = train_control)
+                  data0 = cbind(met_valiL[[k]][,c(1:73)], trait0 = met_valiL[[k]][,j])
+                  rf11 <- caret::train(trait0~. , 
+                                         data=data0, 
+                                         method="rf", 
+                                         trControl=train_control0,
+                                         tuneGrid = expand.grid(mtry=hyper[1]))
+                  
+                  # treatment = "control"
+                  pred = predict(rf11, met_testL[[k]][1:73])
+                  # table(ytest, pred)
+                  corL[k,j] = cor(pred, met_testL[[k]][,j])
+                }
+              }
+  
+CorL_rf[[i]] = corL
+    
+}
+save(CorL_rf, file = "./outputs/CorL_rf100.Rdata")
+```
+
+## 3.4 XGBoost
+```{r, eval=F}
+traits = c("MajorAxis","MinorAxis", "Perimeter")
+treatments = c("control", "stress")
+CorL_xgb = list()
+met=list()
+for(i in 1:100){
+  #i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_trait_scale_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+ 
+    ## valid set
+    met_vali_control0 <- met %>% filter(Treatment == "Control" & set == "train") %>% droplevels()
+    met_vali_control <- met_vali_control0[,-c(1,2,79)] 
+    # colnames(met_vali_control)
+    
+    ## test set
+    met_test_control0 <- met %>% filter(Treatment == "Control" & set == "test") %>% droplevels()
+    met_test_control <- met_test_control0[,-c(1,2,79)]
+    
+    ## valid set
+    met_vali_stress0 <- met %>% filter(Treatment == "Stress" & set == "train") %>% droplevels()
+    met_vali_stress <- met_vali_stress0[,-c(1,2,79)] 
+    
+    ## test set
+    met_test_stress0 <- met %>% filter(Treatment == "Stress" & set == "test") %>% droplevels()
+    met_test_stress <- met_test_stress0[,-c(1,2,79)]
+    # all(met_vali_control0$NSFTV.Id == met_vali_stress0$NSFTV.Id)
+    
+    met_valiL <- list(control = met_vali_control, stress = met_vali_stress)
+    met_testL <- list(control = met_test_control, stress = met_test_stress)
+
+              corL = matrix(nrow=2, ncol=3, dimnames = list(treatments, traits))
+              for(k in treatments){
+                for(j in traits){
+                  hyper <- xgb_func(trait = j, treatment = k, method = train_control)
+                  data0 = cbind(met_valiL[[k]][,c(1:73)], trait0 = met_valiL[[k]][,j])
+                  xgb11 <- caret::train(trait0~. , 
+                                         data=data0, 
+                                         method="xgbTree", 
+                                         trControl=train_control0,
+                                         tuneGrid = expand.grid(nrounds = hyper[,1],
+                                                                 max_depth = hyper[,2],
+                                                                 eta = hyper[,3],
+                                                                 gamma = hyper[,4],
+                                                                 colsample_bytree = hyper[,5],
+                                                                 min_child_weight = hyper[,6],
+                                                                 subsample = hyper[,7]))
+                  
+                  # treatment = "control"
+                  pred = predict(xgb11, met_testL[[k]][1:73])
+                  # table(ytest, pred)
+                  corL[k,j] = cor(pred, met_testL[[k]][,j])
+                }
+              }
+  
+CorL_xgb[[i]] = corL
+    
+}
+save(CorL_xgb, file = "./outputs/CorL_xgb100.Rdata")
+
+```
+
+## 3.5 Draw scatter plots for all Metabolite prediction models
+### 3.5.1 Transfersing ML prediction accuracy into matrix format
+```{r, eval=F}
+load("./outputs/CorL_rf100.Rdata")
+load("./outputs/CorL_svm100.Rdata")
+load("./outputs/CorL_xgb100.Rdata")
+
+RF_control=t(sapply(CorL_rf, function(x){x[1,]}))
+RF_stress=t(sapply(CorL_rf, function(x){x[2,]}))
+SVM_control=t(sapply(CorL_svm, function(x){x[1,]}))
+SVM_stress=t(sapply(CorL_svm, function(x){x[2,]}))
+XGBoost_control=t(sapply(CorL_xgb, function(x){x[1,]}))
+XGBoost_stress=t(sapply(CorL_xgb, function(x){x[2,]}))
+save(RF_control, RF_stress, file="./outputs/RF100.Rdata")
+save(SVM_control,SVM_stress, file="./outputs/SVM100.Rdata")
+save(XGBoost_control, XGBoost_stress, file="./outputs/XGBoost100.Rdata")
+```
+
+### 3.5.2 Transfering MOLS MBLUP BayesC predict accuracy into matrix format
+###control
+```{r, eval=F}
+load("../outputs/control_OLS_MBLUP_BayesC.rda")  #need load one by one, since these two have same names.
+MOLS_control <- corR1
+MBLUP_control <- corR2
+BayesC_control <- corR3
+```
+
+###stress
+```{r, eval=F}
+load("../outputs/stress_OLS_MBLUP_BayesC.rda") #need load one by one, since these two have same names.
+MOLS_stress <- corR1
+MBLUP_stress <- corR2
+BayesC_stress <- corR3
+
+save(MOLS_control, MOLS_stress, file="./outputs/MOLS100.Rdata")
+save(MBLUP_control, MBLUP_stress, file="./outputs/MBLUP100.Rdata")
+save(BayesC_control, BayesC_stress, file="./outputs/BayesC100.Rdata")
+```
+
+### 3.5.3 Draw scatter plots for all regression models.
+- Control and HNT results are in the same plot.
+- Include relative percentage numbers in legend
+```{r}
+##############################
+##loading dataset firstly.###
+#############################
+
+load("./outputs/XGBoost100.Rdata")
+load("./outputs/SVM100.Rdata")
+load("./outputs/RF100.Rdata")
+load("./outputs/MOLS100.Rdata") 
+load("./outputs/MBLUP100.Rdata")
+load("./outputs/BayesC100.Rdata")
+
+MOLS <- rbind(cbind.data.frame(Treatment = "Control", MOLS_control),cbind.data.frame(Treatment = "Stress", MOLS_stress))
+MBLUP <- rbind(cbind.data.frame(Treatment = "Control", MBLUP_control),cbind.data.frame(Treatment = "Stress", MBLUP_stress))
+BayesC <-  rbind(cbind.data.frame(Treatment = "Control", BayesC_control),cbind.data.frame(Treatment = "Stress", BayesC_stress))
+RF <-  rbind(cbind.data.frame(Treatment = "Control", RF_control),cbind.data.frame(Treatment = "Stress", RF_stress))
+SVR <-  rbind(cbind.data.frame(Treatment = "Control", SVM_control),cbind.data.frame(Treatment = "Stress", SVM_stress))
+XGBoost <-  rbind(cbind.data.frame(Treatment = "Control", XGBoost_control),cbind.data.frame(Treatment = "Stress", XGBoost_stress))
+
+####################################
+## Calculate relative percentage.##
+####################################
+traits = c("MajorAxis","MinorAxis", "Perimeter")
+
+# labels = c("Grain length", "Grain width", "Grain perimeter")
+m=1
+traitL <- list()
+for( i in traits){
+    # i = traits[1]
+    BLUPcorR <- data.frame(MOLS[,c("Treatment",i)], MBLUP[, i], BayesC[,i], RF[,i], SVR[,i], XGBoost[,i])
+    BLUPcorR$Treatment <- as.factor(BLUPcorR$Treatment)
+    colnames(BLUPcorR) <- c("Treatment", "MOLS", "MBLUP", "BayesC","RF","SVR","XGBoost")
+    models <- c("MOLS", "MBLUP", "BayesC","RF","SVR","XGBoost")
+    comb_mol <- combn(models,2)
+    comb_mol_con <- rbind.data.frame(comb_mol, NA)
+    comb_mol_trt <- rbind.data.frame(comb_mol, NA) #first row - second rw.
+    
+  
+    BLUPcorR_con <- BLUPcorR %>% filter(Treatment == "Control")
+    BLUPcorR_trt <- BLUPcorR %>% filter(Treatment == "Stress")
+    
+    for (j in 1:15){
+      # j=1
+      x=comb_mol[1,j]
+      y=comb_mol[2,j]
+      comb_mol_con[3,j] <- sum(BLUPcorR_con[,x]-BLUPcorR_con[,y]>0)
+      comb_mol_trt[3,j] <- sum(BLUPcorR_trt[,x]-BLUPcorR_trt[,y]>0)      
+      
+    }
+    
+    traitL[[m]] <- list(control = comb_mol_con, stress = comb_mol_trt)
+    m = m+1
+}
+
+names(traitL) <- traits
+save(traitL, file="./compare_models_percentage.Rdata")
+
+#######################
+## Draw plots##########
+#######################
+traits = c("MajorAxis","MinorAxis", "Perimeter")
+labels = c("Grain length", "Grain width", "Grain perimeter")
+load("./compare_models_percentage.Rdata")
+t=1
+for( i in traits){
+    # i = traits[1]
+    BLUPcorR <- data.frame(MOLS[,c("Treatment",i)], MBLUP[, i], BayesC[,i], RF[,i], SVR[,i], XGBoost[,i])
+    BLUPcorR$Treatment <- as.factor(BLUPcorR$Treatment)
+    colnames(BLUPcorR) <- c("Treatment", "MOLS", "MBLUP", "BayesC","RF","SVR","XGBoost")
+    models <- c("MOLS", "MBLUP", "BayesC","RF","SVR","XGBoost")
+    comb_mol <- combn(models,2)
+    temp = traitL[[i]]
+    
+    
+    #### here to draw plots.
+    p=list()
+    aa=array()
+
+    for (j in 1:15){
+      BLUPcorR$Treatment <- rep(c(paste0("Control: ", temp$control[3, j],"%"), paste0("HNT: ", temp$stress[3, j], "%")), each =100)
+      p[[j]] <- ggplot(data = BLUPcorR, aes_string(comb_mol[1,j],comb_mol[2,j])) +
+                coord_fixed() +
+                scale_x_continuous(limits=c(-0.4, 0.85), breaks=c(-0.4,-0.2,0,0.2,0.4,0.6,0.8)) +
+                scale_y_continuous(limits=c(-0.4, 0.85), breaks=c(-0.4,-0.2,0,0.2,0.4,0.6,0.8)) +
+
+                geom_point(size=2, alpha=0.5, aes(colour=Treatment)) +
+                geom_abline(intercept = 0, slope = 1)  + theme_bw() +
+                labs(x=comb_mol[1,j],y=comb_mol[2,j])+
+                theme(legend.position=c(0.745,0.13))+
+                # scale_color_discrete(name="") +
+                theme(legend.key.size = unit(0.01, "cm"), legend.title = element_blank())+
+                theme(legend.background = element_rect(fill="aliceblue"))+
+                theme(legend.text = element_text(size=10, face="bold"))
+      # print(p[[j]])
+
+      }
+
+    # comb00 = rbind(comb_mol, aa);rownames(comb_mol)=c("M1","M2","Percentage(M1>M2)")
+    plot_Ave <- ggarrange(p[[1]],p[[2]],p[[3]],p[[4]],p[[5]],p[[6]],p[[7]],p[[8]],p[[9]],p[[10]],p[[11]],p[[12]],p[[13]],p[[14]],p[[15]], nrow = 3, ncol = 5, common.legend = F, labels=labels[t])
+    t=t+1
+
+
+ print(plot_Ave)
+ dev.print(pdf, file = file.path(path.out, paste0(i,"_regression_comb.pdf")), height = 12, width = 15)
+}
+```
+
+# 4. Predict in different treatment groups.
+## 4.1 Using metabolites and traits in stress group to build model then predict traits in control group.
+```{r, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.trt.over[,-c(1:2)], center = T, scale = T)
+y01 = scale(trait.con.over[, -c(1:2)], center = T, scale = T)
+# M matrix 
+Mcs = scale(met.trt.over[,-c(1:2)])
+Mcs1 = scale(met.con.over[,-c(1:2)])
+
+Mchnt = tcrossprod(Mcs) 
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+# For MBLUP
+    ETA1 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+       )
+
+# set cross-validation parameters
+ntst  <-  32 # test 161*0.2
+ntrn  <- 161-32 # reference 161*0.8
+nCV <- 100 # times of CV
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+
+corR_trt_to_con <- matrix(0, ncol = ncol(y0), nrow = nCV) #MBLUP
+  colnames(corR_trt_to_con) = traits
+
+
+# CV
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+
+  #MBLUP
+      fit2 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      
+      pred = predict(fit2, Mcs1) #plug into Mcs1
+      
+      corR_trt_to_con[i,j] <- cor(pred[index], y01[index,j])
+
+  }}
+
+save(corR_trt_to_con, file=file.path(path.output, "corR_trt_to_con.rda"))
+```
+
+## 4.2. Using metabolites and traits in control group to build model then predict traits in stress group.
+```{r, eval = FALSE}
+# Scale traits (Normalize)
+y0 = scale(trait.con.over[,-c(1:2)], center = T, scale = T)
+y01 = scale(trait.trt.over[, -c(1:2)], center = T, scale = T)
+# M matrix 
+Mcs = scale(met.con.over[,-c(1:2)])
+Mcs1 = scale(met.trt.over[,-c(1:2)])
+
+Mchnt = tcrossprod(Mcs) 
+Mchnt2 = Mchnt/mean(diag(Mchnt))
+EVD_Mchnt <- eigen(Mchnt2)
+# For MBLUP
+    ETA1 <- list(
+        MET = list(V=EVD_Mchnt$vectors, d=EVD_Mchnt$values, model='RKHS')
+       )
+
+# set cross-validation parameters
+ntst  <-  32 # test 161*0.2
+ntrn  <- 161-32 # reference 161*0.8
+nCV <- 100 # times of CV
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+
+corR_con_to_trt <- matrix(0, ncol = ncol(y0), nrow = nCV) #MBLUP
+  colnames(corR_con_to_trt) = traits
+
+
+# CV
+for (i in 1:nCV) {
+  # random-sampling to decide testing & reference accessions
+  set.seed(100 + i)
+  index <- sample(1:nrow(y0), size=ntst) # random sampling
+  y <- y0
+  y[index,] <- NA
+  for (j in 1:ncol(y0)){
+  cat("Now running nCV = ", i,"trait = ", j, "\n")
+  ySingle <- y[,j]
+  
+
+  #MBLUP
+      fit2 <- BGLR(y=ySingle, ETA=ETA1, nIter = 30000,
+                 burnIn = 10000, thin = 5, verbose = F)
+      
+      pred = predict(fit2, Mcs1) #plug into Mcs1
+      
+      corR_con_to_trt[i,j] <- cor(pred[index], y01[index,j])
+
+  }}
+
+save(corR_con_to_trt, file=file.path(path.output, "corR_con_to_trt.rda"))
+```
+
+## 4.3 draw plots
+```{r}
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs_AdjustSep/control_OLS_MBLUP_BayesC.rda")
+MBLUP_con <- corR2
+MBLUP_con.long <- cbind.data.frame(reshape2::melt(MBLUP_con), group="Control")
+
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs_AdjustSep/stress_OLS_MBLUP_BayesC.rda")
+MBLUP_trt <- corR2
+MBLUP_trt.long <- cbind.data.frame(reshape2::melt(MBLUP_trt), group="HNT")
+
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs/corR_con_to_trt.rda")
+
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs/corR_trt_to_con.rda")
+
+diff.df <- rbind.data.frame(cbind(reshape2::melt(corR_con_to_trt), group="Control-HNT"), cbind(reshape2::melt(corR_trt_to_con), group="HNT-Control"), MBLUP_con.long, MBLUP_trt.long)
+diff.df$Group <- factor(diff.df$group, levels=c("Control", "HNT-Control", "HNT", "Control-HNT"))
+diff.df$Var2 <- gsub("MajorAxis","Grain length", diff.df$Var2)
+diff.df$Var2 <- gsub("MinorAxis", "Grain width", diff.df$Var2)
+diff.df$Var2 <- gsub("Perimeter", "Grain perimeter", diff.df$Var2)
+traits = c("Grain length", "Grain width", "Grain perimeter")
+diff.df$Var2 <- factor(diff.df$Var2, levels=traits)
+dp3 <- ggplot(diff.df, aes(x=Var2, y=value)) + 
+  geom_boxplot(aes(fill=Group))+
+  labs(x="Phenotype", y = "Predictive correlation") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(-0.5,1)
+dp3
+dev.print(pdf, file = "./outputs/TreatmentDiff.pdf", height = 8, width = 8)
+
+round((colMeans(corR_trt_to_con)-colMeans(MBLUP_con))*100 / colMeans(MBLUP_con), digits = 4)
+round((colMeans(corR_con_to_trt)-colMeans(MBLUP_trt))*100 / colMeans(MBLUP_trt), digits = 4)
+```
+
+
