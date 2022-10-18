@@ -1,2 +1,3 @@
 # VTUNL_Rice
-Lalalala
+
+This repo contains all the code used in Bi et al. (2022).
