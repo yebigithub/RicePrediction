@@ -1,0 +1,637 @@
+---
+title: "Section3 Classification"
+author: "Ye Bi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Classification/Machine_Learning")
+path.met = "../../../Pheno"
+path.out = "./outputs"
+```
+
+# Loading packages
+```{r, eval = F}
+library(tidyverse)
+library(Metrics)
+library(caret)
+library(MLeval)
+library(ggplot2)
+```
+
+
+# 1. Classification
+## 1.0. Build cross-validation datasets for classification.
+```{r, eval = F}
+## Read into corrected metabolite data.
+met.con <- read.csv(file=file.path(path.met,"met.rr.con.csv"))
+met.trt <- read.csv(file=file.path(path.met,"met.rr.trt.csv"))
+
+con = met.con
+trt = met.trt
+#Building necessary set numbers. 
+ntst  <-  38 # testing 192*0.2
+ntrn  <-  192-38 # training for control
+ntrn_trt <- 188-38 # training for stress
+nCV <- 200 # times of CV
+
+# Cross-Validation
+for (i in 1:nCV) {
+  cat("Now running nCV = ", i, "\n")
+  set.seed(100 + i)
+  test.ix.con <- sample(1:nrow(con), size=ntst) # random sampling
+  train.ix.con = setdiff(1:nrow(con), test.ix.con)
+  test.ix.trt = sample(1:nrow(trt), size=ntst) 
+  train.ix.trt = setdiff(1:nrow(trt), test.ix.trt)
+  met.test = rbind.data.frame(con[test.ix.con,], trt[test.ix.trt,])
+  met.train = rbind.data.frame(con[train.ix.con,], trt[train.ix.trt,])
+
+  met.train$set = "train"
+  met.test$set = "test"
+  table(met.test$Treatment); table(met.train$Treatment)
+  met_cv = rbind.data.frame(met.train, met.test)
+  met_cv = met_cv %>% arrange(desc(Treatment), NSFTV_ID, by_group = T)
+  # table(met_cv[,1:2] == met.rr[,1:2])
+  dir.create(paste0("./CrossValidation/cv_",i))
+  write.csv(met_cv, paste0("./CrossValidation/cv_",i,"/met_",i,".csv"), row.names = F, quote = F)
+}
+
+```
+
+## 1.1 Logistic Regression
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+Acc.lr = list()
+AUC.lr = list()
+recall.lr = list()
+precision.lr=list()
+f1.lr=list()
+met <- list()
+for(i in 1:25){
+  # i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+  met_vali <- met %>% filt(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+  met_vali0 = met_vali[,-c(1,76)]
+  
+    LR <- caret::train(Treatment~. , 
+                           data=met_vali0, 
+                           method="glm", 
+                           trControl=train_control0,
+                           tuneLength=10)
+    ytest = met$Treatment[met$set=="test"]
+    Xtest = met[met$set=="test", 3:75]
+    prob = predict(LR, Xtest, type="prob")
+    pred = predict(LR, Xtest)
+    pred1 = ifelse(pred=="Stress",1,0)
+    ytest1 = ifelse(ytest=="Stress",1,0)
+    # table(ytest1, pred1)
+    AUC.lr[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+    Acc.lr[[i]] = Metrics::accuracy(ytest1, pred1) 
+    recall.lr[[i]] = Metrics::recall(ytest1, pred1)
+    precision.lr[[i]] = Metrics::precision(ytest1, pred1)
+    f1.lr[[i]] = 2*(recall.lr[[i]] * precision.lr[[i]]) / (recall.lr[[i]] + precision.lr[[i]])
+}
+
+
+save(AUC.lr, Acc.lr, recall.lr, precision.lr, f1.lr, file="./outputs/lr_caret.Rdata")
+```
+
+## 1.2 Support vector machine
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+Acc.svm = list()
+AUC.svm = list()
+recall.svm = list()
+precision.svm=list()
+f1.svm=list()
+met <- list()
+for(i in 1:25){
+  # i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+  #met_train0 <- met[,-c(1,3,4,78)]
+  met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+  met_vali0 = met_vali[,-c(1,76)]
+
+  hyper <- svm9_func(met_vali0 = met_vali0, method = train_control)
+  
+
+    svm9 <- caret::train(Treatment~. , 
+                           data=met_vali0, 
+                           method="svmRadialSigma", 
+                           trControl=train_control0,
+                           tuneGrid = expand.grid(C=hyper[[2]], sigma=hyper[[1]]))
+    ytest = met$Treatment[met$set=="test"]
+    Xtest = met[met$set=="test", 3:75]
+    prob = predict(svm9, Xtest, type="prob")
+    pred = predict(svm9, Xtest)
+    pred1 = ifelse(pred=="Stress",1,0)
+    ytest1 = ifelse(ytest=="Stress",1,0)
+    # table(ytest1, pred1)
+    AUC.svm[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+    Acc.svm[[i]] = Metrics::accuracy(ytest1, pred1) 
+    recall.svm[[i]] = Metrics::recall(ytest1, pred1)
+    precision.svm[[i]] = Metrics::precision(ytest1, pred1)
+    f1.svm[[i]] = 2*(recall.svm[[i]] * precision.svm[[i]]) / (recall.svm[[i]] + precision.svm[[i]])
+
+}
+
+
+save(AUC.svm, Acc.svm, recall.svm, precision.svm, f1.svm, file="./outputs/svm.Rdata")
+```
+
+## 1.3 Random Forest
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+Acc.rf = list()
+AUC.rf = list()
+recall.rf = list()
+precision.rf=list()
+f1.rf=list()
+met <- list()
+for(i in 1:25){
+  # i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+  #met_train0 <- met[,-c(1,3,4,78)]
+  met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+  met_vali0 = met_vali[,-c(1,76)]
+
+  hyper <- rf_func(met_vali0 = met_vali0, method = train_control)
+  
+    rff <- caret::train(Treatment~. , 
+                           data=met_vali0, 
+                           method="rf", 
+                           trControl=train_control0,
+                           tuneGrid = expand.grid(mtry=hyper[1]))
+    ytest = met$Treatment[met$set=="test"]
+    Xtest = met[met$set=="test", 3:75]
+    prob = predict(rff, Xtest, type="prob")
+    pred = predict(rff, Xtest)
+    pred1 = ifelse(pred=="Stress",1,0)
+    ytest1 = ifelse(ytest=="Stress",1,0)
+    # table(ytest1, pred1)
+    AUC.rf[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+    Acc.rf[[i]] = Metrics::accuracy(ytest1, pred1) 
+    recall.rf[[i]] = Metrics::recall(ytest1, pred1)
+    precision.rf[[i]] = Metrics::precision(ytest1, pred1)
+    f1.rf[[i]] = 2*(recall.rf[[i]] * precision.rf[[i]]) / (recall.rf[[i]] + precision.rf[[i]])
+
+}
+
+save(AUC.rf, Acc.rf, recall.rf, precision.rf, f1.rf, file="./outputs/rf.Rdata")
+```
+
+## 1.4 Extreme gradient boosting
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+met <- list()
+Acc.xgb = list()
+AUC.xgb = list()
+recall.xgb = list()
+precision.xgb=list()
+f1.xgb=list()
+
+for(i in 1:25){
+  #i=1
+  cat(paste0("Now is running i=", i, "\n"))
+  met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_",i,".csv"))
+  met[[i]] = met[[i]] %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+  met = met[[i]]
+  #met_train0 <- met[,-c(1,3,4,78)]
+  met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+  met_vali0 = met_vali[,-c(1,76)]
+    
+  hyper <- xgb_func(met_vali0, train_control)
+    xgb11 <- caret::train(Treatment~. , 
+                           data=met_vali0, 
+                           method="xgbTree", 
+                           trControl=train_control0,
+                           tuneGrid = expand.grid(nrounds = hyper[,1],
+                                                   max_depth = hyper[,2],
+                                                   eta = hyper[,3],
+                                                   gamma = hyper[,4],
+                                                   colsample_bytree = hyper[,5],
+                                                   min_child_weight = hyper[,6],
+                                                   subsample = hyper[,7]))
+    ytest = met$Treatment[met$set=="test"]
+    Xtest = met[met$set=="test", 3:75]
+    prob = predict(xgb11, Xtest, type="prob")
+    pred = predict(xgb11, Xtest)
+    #table(ytest, pred)
+
+    pred1 = ifelse(pred=="Stress",1,0)
+    ytest1 = ifelse(ytest=="Stress",1,0)
+    
+    AUC.xgb[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+    Acc.xgb[[i]] = Metrics::accuracy(pred, ytest) 
+    recall.xgb[[i]] = Metrics::recall(ytest1, pred1)
+    precision.xgb[[i]] = Metrics::precision(ytest1, pred1)
+    f1.xgb[[i]] = 2*(recall.xgb[[i]] * precision.xgb[[i]]) / (recall.xgb[[i]] + precision.xgb[[i]])
+
+}
+
+save(AUC.xgb, Acc.xgb, recall.xgb, precision.xgb, f1.xgb, file="./outputs/xgb.Rdata")
+```
+
+## 1.5 Violin plot for all ML models
+### 1.5.1 Accuracy
+```{r, eval = F}
+load("./outputs/lr_caret.Rdata")
+load("./outputs/rf.Rdata")
+load("./outputs/svm.Rdata")
+load("./outputs/xgb.Rdata")
+
+Log_Reg = unlist(Acc.lr)
+Random_Forest = unlist(Acc.rf)
+SVM_radial=unlist(Acc.svm)
+XGBoost = unlist(Acc.xgb)
+
+df.acc.long <- reshape2::melt(df.acc)
+colnames(df.acc.long) = c("Model", "value")
+
+dp <- ggplot(df.acc.long, aes(x=Model, y=value, fill=Model)) + 
+  geom_violin()+
+  geom_boxplot(width=0.03, fill="white")+
+  labs(x="Model", y = "Accuracy") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0,1)
+dp
+dev.print(pdf, file = "./outputs/accuracy_violin.pdf", height = 8, width = 8)
+```
+
+
+### 1.5.2 AUC
+```{r, eval = F}
+load("./outputs/lr_caret.Rdata")
+load("./outputs/rf.Rdata")
+load("./outputs/svm.Rdata")
+load("./outputs/xgb.Rdata")
+
+Log_Reg = unlist(AUC.lr)
+Random_Forest = unlist(AUC.rf)
+SVM_radial=unlist(AUC.svm)
+XGBoost = unlist(AUC.xgb)
+
+df.AUC.long <- reshape2::melt(df.AUC)
+colnames(df.AUC.long) = c("Model", "value")
+
+
+dp <- ggplot(df.AUC.long, aes(x=Model, y=value, fill=Model)) + 
+  geom_violin(trim=T)+
+  geom_boxplot(width=0.03, fill="white")+
+  labs(x="Model", y = "Area under the curve") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0, 1)
+dp
+dev.print(pdf, file = "./outputs/AUC_violin.pdf", height = 8, width = 8)
+```
+
+
+### 1.5.3 f1 score
+```{r, eval = F}
+load("./outputs/lr_caret.Rdata")
+load("./outputs/rf.Rdata")
+load("./outputs/svm.Rdata")
+load("./outputs/xgb.Rdata")
+
+Log_Reg = unlist(f1.lr)
+Random_Forest = unlist(f1.rf)
+SVM_radial=unlist(f1.svm)
+XGBoost = unlist(f1.xgb)
+
+df.AUC.long <- reshape2::melt(df.AUC)
+colnames(df.AUC.long) = c("Model", "value")
+
+
+dp <- ggplot(df.AUC.long, aes(x=Model, y=value, fill=Model)) + 
+  geom_violin(trim=T)+
+  geom_boxplot(width=0.03, fill="white")+
+  labs(x="Model", y = "F1 score") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0, 1)
+dp
+dev.print(pdf, file = "./outputs/f1score_violin.pdf", height = 8, width = 8)
+```
+
+# 2. Classification for metabolite subsets.
+## 2.0 Build cross-validation 
+```{r, eval = F}
+met.sub_func<-function(n_met){
+                  # n_met = 20
+                  met <- list()
+                  met_sub <- list()
+                  for(i in 1:200){
+                    # i=1
+                    set.seed(100+i)
+                    cat(paste0("Now is running i=", i, "\n"))
+                    met[[i]] = read.csv(paste0("./CrossValidation/cv_",i,"/met_",i,".csv"))
+                   names = c(paste0("a",1:10),paste0("b",1:10),paste0("c",1:10),paste0("d",1:10),paste0("e",1:10),paste0("f",1:10),paste0("g",1:10),paste0("h",1:3))
+                      cols <- c("NSFTV_ID", "Treatment", sample(names, n_met), "set")
+                      met_sub[[i]] <- met[[i]][,cols]
+                      dir.create(paste0("./CrossValidation/cv_",i, "/met",n_met), recursive = T)
+                      write.csv(met_sub[[i]], paste0("./CrossValidation/cv_",i,"/met",n_met,"/met",".csv"), row.names = F, quote = F)
+                    }
+                    
+            }
+
+met.sub_func(n_met = 10)
+met.sub_func(n_met = 20)
+met.sub_func(n_met = 30)
+met.sub_func(n_met = 40)
+met.sub_func(n_met = 50)
+met.sub_func(n_met = 60)
+```
+
+## 2.1 Support Vector Machine
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+# build function for svm9 --
+
+svm9_func <- function(met_vali0, method){
+  model = caret::train(Treatment~. ,
+                       data=met_vali0,
+                       method="svmRadialSigma",
+                       trControl=method,
+                       tuneGrid = expand.grid(C=seq(25,30,length=20), sigma=seq(0.005, 0.02,length=20)))
+  return(model$bestTune)}
+
+# Build fuction for met_sub --
+svm_sub_func <- function(n_met){
+    Acc.svm.radial = list()
+    AUC.svm.radial = list()
+    recall.svm = list()
+    precision.svm=list()
+    f1.svm=list()
+    met <- list()
+    for(i in 1:100){
+      # i=1
+      cat(paste0("Now is running rep=", i, "\n"))
+      met = read.csv(paste0("./CrossValidation/cv_",i,"/met",n_met,"/met",".csv"))
+      met = met %>% mutate(across(c(NSFTV_ID, Treatment), as.factor))
+      #met_train0 <- met[,-c(1,3,4,78)]
+      met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+      met_vali0 = met_vali[,-c(1,length(met_vali))]
+
+      hyper <- svm9_func(met_vali0 = met_vali0, method = train_control)
+
+        svm9 <- caret::train(Treatment~. ,
+                              data=met_vali0,
+                              method="svmRadialSigma",
+                              trControl=train_control0,
+                              tuneGrid = expand.grid(C=hyper[[2]], sigma=hyper[[1]]))
+        ytest = met$Treatment[met$set=="test"]
+        Xtest = met[met$set=="test", -c(1,2,length(met))]
+        prob = predict(svm9, Xtest, type="prob")
+        pred = predict(svm9, Xtest)
+        pred1 = ifelse(pred=="Stress",1,0)
+        ytest1 = ifelse(ytest=="Stress",1,0)
+        # table(ytest1, pred1)
+        AUC.svm.radial[[i]]  = pROC::auc(ytest~prob[,2],direction="<")
+        Acc.svm.radial[[i]] = Metrics::accuracy(ytest1, pred1)
+        recall.svm[[i]] = Metrics::recall(ytest1, pred1)
+        precision.svm[[i]] = Metrics::precision(ytest1, pred1)
+        f1.svm[[i]] = 2*(recall.svm[[i]] * precision.svm[[i]]) / (recall.svm[[i]] + precision.svm[[i]])
+
+    }
+
+    save(AUC.svm.radial, Acc.svm.radial, recall.svm, precision.svm, f1.svm, file=paste0("./outputs/svm_met", n_met, ".Rdata"))
+}
+
+svm_sub_func(n_met = 10)
+svm_sub_func(n_met = 20)
+svm_sub_func(n_met = 30)s
+svm_sub_func(n_met = 50)
+svm_sub_func(n_met = 60)
+```
+
+## 2.2 Random Forest
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+
+# build rf function --
+rf_func <- function(met_vali0, method){
+  model = caret::train(Treatment~. ,
+                       data=met_vali0,
+                       method="rf",
+                       trControl=method,
+                       tuneLength=10)
+  return(model$bestTune)}
+
+
+# Build rf_sub function --
+rf_sub_func <- function(n_met){
+      Acc.rf = list()
+      AUC.rf = list()
+      recall.rf = list()
+      precision.rf=list()
+      f1.rf=list()
+      
+      met <- list()
+      
+      for(i in 1:100){
+        # i=1
+        cat(paste0("Now is running i=", i, "\n"))
+        met = read.csv(paste0("./CrossValidation/cv_",i,"/met",n_met,"/met",".csv"))
+        met = met %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+
+        met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+        met_vali0 = met_vali[,-c(1,length(met_vali))]
+      
+        hyper <- rf_func(met_vali0 = met_vali0, method = train_control)
+        
+          rff <- caret::train(Treatment~. , 
+                                 data=met_vali0, 
+                                 method="rf", 
+                                 trControl=train_control0,
+                                 tuneGrid = expand.grid(mtry=hyper[1]))
+          ytest = met$Treatment[met$set=="test"]
+          Xtest = met[met$set=="test", -c(1,2,length(met))]
+          prob = predict(rff, Xtest, type="prob")
+          pred = predict(rff, Xtest)
+          pred1 = ifelse(pred=="Stress",1,0)
+          ytest1 = ifelse(ytest=="Stress",1,0)
+          # table(ytest1, pred1)
+          AUC.rf[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+          Acc.rf[[i]] = Metrics::accuracy(ytest1, pred1) 
+          recall.rf[[i]] = Metrics::recall(ytest1, pred1)
+          precision.rf[[i]] = Metrics::precision(ytest1, pred1)
+          f1.rf[[i]] = 2*(recall.rf[[i]] * precision.rf[[i]]) / (recall.rf[[i]] + precision.rf[[i]])
+      
+      }
+      
+      save(AUC.rf, Acc.rf, recall.rf, precision.rf, f1.rf, file=paste0("./outputs/rf_met", n_met, ".Rdata"))
+}
+
+rf_sub_func(n_met = 10)
+rf_sub_func(n_met = 20)
+rf_sub_func(n_met = 30)
+rf_sub_func(n_met = 40)
+rf_sub_func(n_met = 50)
+rf_sub_func(n_met = 60)
+
+```
+
+
+## 2.3 Extreme gradient boosting
+```{r, eval = F}
+train_control = trainControl(method="cv",number = 5, savePredictions = TRUE, classProbs = TRUE)
+train_control0 = trainControl(method="none", savePredictions = TRUE, classProbs = TRUE)
+
+ff_func <- function(n_met){
+  
+        met <- NULL
+        
+        Acc.xgb = list()
+        AUC.xgb = list()
+        recall.xgb = list()
+        precision.xgb = list()
+        f1.xgb = list()
+
+
+        for(i in 1:100){
+          # i=j=1
+          cat(paste0("Now is running rep=", i, "\n"))
+          met = read.csv(paste0("./CrossValidation/cv_",i,"/met",n_met,"/met",".csv"))
+          met = met %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) 
+    
+          #met_train0 <- met[,-c(1,3,4,78)]
+          met_vali <- met %>% filter(set == "train") %>% mutate(across(c(NSFTV_ID, Treatment), as.factor)) %>% droplevels()
+          met_vali0 = met_vali[,-c(1,length(met_vali))]
+            
+          hyper <- xgb_func(met_vali0, train_control)
+            xgb11 <- caret::train(Treatment~. , 
+                                   data=met_vali0, 
+                                   method="xgbTree", 
+                                   trControl=train_control0,
+                                   tuneGrid = expand.grid(nrounds = hyper[,1],
+                                                           max_depth = hyper[,2],
+                                                           eta = hyper[,3],
+                                                           gamma = hyper[,4],
+                                                           colsample_bytree = hyper[,5],
+                                                           min_child_weight = hyper[,6],
+                                                           subsample = hyper[,7]))
+            ytest = met$Treatment[met$set=="test"]
+            Xtest = met[met$set=="test", -c(1,2,length(met))]
+            prob = predict(xgb11, Xtest, type="prob")
+            pred = predict(xgb11, Xtest)
+            #table(ytest, pred)
+        
+            pred1 = ifelse(pred=="Stress",1,0)
+            ytest1 = ifelse(ytest=="Stress",1,0)
+            
+            AUC.xgb[[i]]  = pROC::auc(ytest~prob[,2],direction="<") 
+            Acc.xgb[[i]] = Metrics::accuracy(pred, ytest) 
+            recall.xgb[[i]] = Metrics::recall(ytest1, pred1)
+            precision.xgb[[i]] = Metrics::precision(ytest1, pred1)
+            f1.xgb[[i]] = 2*(recall.xgb[[i]] * precision.xgb[[i]]) / (recall.xgb[[i]] + precision.xgb[[i]])
+        
+        }
+    
+        
+  save(AUC.xgb, Acc.xgb, recall.xgb, precision.xgb, f1.xgb, file=paste0("./outputs/xgb_met", n_met, ".Rdata"))
+}
+
+ff_func(n_met = 10)
+ff_func(n_met = 20)
+ff_func(n_met = 30)
+ff_func(n_met = 40)
+ff_func(n_met = 50)
+ff_func(n_met = 60)
+```
+
+## 2.4 Boxplots
+### 2.4.1 Accuracy
+```{r, eval = F}
+xgbL <- list()
+svmL <- list()
+rfL <- list()
+for(i in 1:6){
+  load(paste0("./outputs/xgb_met",i,"0.Rdata"))
+  xgbL[[i]] = data.frame(acc=unlist(Acc.xgb), AUC = unlist(AUC.xgb), f1 = unlist(f1.xgb))
+  load(paste0("./outputs/svm_met",i,"0.Rdata"))
+  svmL[[i]] = data.frame(acc=unlist(Acc.svm.radial), AUC = unlist(AUC.svm.radial), f1 = unlist(f1.svm))
+  load(paste0("./outputs/rf_met",i,"0.Rdata"))
+  rfL[[i]] = data.frame(acc=unlist(Acc.rf), AUC = unlist(AUC.rf), f1 = unlist(f1.rf))
+}
+
+# length(rep(paste0("met_",1:6), each = 100))
+
+xgb.df<- cbind.data.frame(met_group=rep(paste0("",10*(1:6)), each = 100), do.call(rbind, xgbL), model = "XGBoost")
+svm.df<- cbind.data.frame(met_group=rep(paste0("",10*(1:6)), each = 100), do.call(rbind, svmL), model = "SVM")
+rf.df<- cbind.data.frame(met_group=rep(paste0("",10*(1:6)), each = 100), do.call(rbind, rfL), model = "RF")
+
+models_acc.df <- rbind.data.frame(svm.df[,c(1,2,5)], rf.df[,c(1,2,5)], xgb.df[,c(1,2,5)])
+models_acc.df$Model <- factor(models_acc.df$model, levels=unique(models_acc.df$model))
+# temp <- Met_Sub.long %>% filter()
+
+dp1 <- ggplot(models_acc.df, aes(x=met_group, y=acc)) + 
+  geom_boxplot(aes(fill=Model))+
+  labs(x="Number of metabolites", y = "Accuracy") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0.5,1.1)
+dp1
+# dev.print(pdf, file = "./outputs/accuracy_Models_MetSub.pdf", height = 8, width = 8)
+```
+
+### 2.4.2 AUC
+```{r, eval = F}
+models_AUC.df <- rbind.data.frame(svm.df[,c(1,3,5)], rf.df[,c(1,3,5)], xgb.df[,c(1,3,5)])
+models_AUC.df$Model <- factor(models_AUC.df$model, levels=unique(models_AUC.df$model))
+
+dp2 <- ggplot(models_AUC.df, aes(x=met_group, y=AUC)) + 
+  geom_boxplot(aes(fill=Model))+
+  labs(x="Number of metabolites", y = "Area under the curve") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0.5,1.1)
+dp2
+dev.print(pdf, file = "./outputs/AUC_models_MetSub.pdf", height = 8, width = 8)
+```
+
+### 2.4.3 f1 score
+```{r, eval = F}
+models_f1.df <- rbind.data.frame(svm.df[,c(1,4,5)], rf.df[,c(1,4,5)], xgb.df[,c(1,4,5)])
+models_f1.df$Model <- factor(models_f1.df$model, levels=unique(models_f1.df$model))
+
+dp3 <- ggplot(models_f1.df, aes(x=met_group, y=f1)) + 
+  geom_boxplot(aes(fill=Model))+
+  labs(x="Number of metabolites", y = "F1 score") +
+  scale_fill_brewer(palette="Pastel1") + theme_classic()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold")) +
+  ylim(0.5,1.1)
+dp3
+dev.print(pdf, file = "./outputs/f1_models_MetSub.pdf", height = 8, width = 8)
+```
+
