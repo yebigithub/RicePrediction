@@ -1,0 +1,275 @@
+---
+title: "Section6 Multi-trait Genomic Prediction"
+author: "Ye Bi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+###Run all of Multi-trait Genomic Prediction Models in Virginia Tech ADVANCED RESEARCH COMPUTING (ARC) cluster###
+
+## Loading packages
+```{r}
+library(ggplot2)
+library(qqman)
+library(ggpubr)
+library(knitr)
+library(tidyverse)
+```
+
+```{r}
+path.out <- "~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Multi_trait/ARC_files/ARC_outputs/Multi_trait/outputs/Summary"
+traits <- c("MajorAxis", "MinorAxis", "Perimeter")
+treatments <- c("Control", "Stress")
+scenarios <- c("scenario1", "scenario2")
+met_names <- read.delim("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Pheno/original/met_names.txt", header=FALSE)
+names <- met_names$V1
+```
+
+```{r}
+# Scenario 1 ---------
+setwd("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Multi_trait/ARC_files/ARC_outputs/Multi_trait/outputs/Summary")
+
+GBLUP_acc <- matrix(c(0.6438,0.7273,0.5667,0.6425,0.6743,0.6279), nrow = 2, byrow = T, dimnames = list(treatments, traits))
+
+
+## 0. Preprocessing for sc1 --------
+
+sc1_names <- list.files(path="./", pattern = "scenario1")
+sc1L <- list()
+for(i in 1:6){
+  sc1L[[i]] <- readRDS(sc1_names[i])
+}
+names(sc1L) <- gsub("_scenario1.rds","",sc1_names)
+
+sc1.df <- do.call(rbind, sc1L)
+for(i in 1:6){
+  cat(rownames(sc1.df)[i], "\n")
+print(table(sc1.df[i,] > GBLUP_acc[i]))
+cat("\n")
+}
+
+majordf <- data.frame(Acc=c(sc1L$MajorAxis_Control, sc1L$MajorAxis_Stress), 
+                      Treatment = rep(c("Control", "Stress"), each = 73),
+                      Index = rep(names, 2),
+                      Order = rep(1:73, 2))
+minordf <- data.frame(Acc=c(sc1L$MinorAxis_Control, sc1L$MinorAxis_Stress), 
+                      Treatment = rep(c("Control", "Stress"), each = 73),
+                      Index = rep(names, 2),
+                      Order = rep(1:73, 2))
+perdf <- data.frame(Acc=c(sc1L$Perimeter_Control, sc1L$Perimeter_Stress), 
+                      Treatment = rep(c("Control", "Stress"), each = 73),
+                      Index = rep(names, 2),
+                    Order = rep(1:73, 2))
+final_sc1_df <- list(majordf, minordf, perdf); names(final_sc1_df) <- traits
+
+## 1. list all the points lager than single-trait prediction.-------
+
+for(i in traits){
+  cat("In control group, for trait ", i,"\n the following metabolites who have greater multi-trait prediction accuracy than single-trait prediction \n")
+  con.df <- final_sc1_df[[i]] %>% filter(Treatment == "Control")
+  greater = which(con.df$Acc>GBLUP_acc[1,i])
+  if(length(greater) > 0){
+    for( t in greater){
+      temp = con.df$Index[t]
+      cat(" #", rownames(con.df)[t], " ") 
+      cat(temp,"\n")
+      
+    }
+    cat("\n =================== \n")
+  }
+  
+  cat("In stress group, for trait ", i,"\n the following metabolites who have greater multi-trait prediction accuracy than single-trait prediction \n")
+  trt.df <- final_sc1_df[[i]] %>% filter(Treatment == "Stress")
+  greater1 = which(trt.df$Acc>GBLUP_acc[2,i])
+  if(length(greater1)>0){
+    for( t1 in greater1){
+      temp1 = trt.df$Index[t1]
+      cat(" #",rownames(trt.df)[t1]," ") 
+      cat(temp1,"\n")
+    }
+    cat("\n =================== \n")
+  }
+}
+
+
+
+## 2. draw scatter plot for sc1 -------------
+p <- list()
+m=1
+for(i in traits){
+    trait_names = c("Grain length", "Grain width", "Grain perimeter")
+      p[[i]]<- ggplot(final_sc1_df[[i]], aes(x=Order, y=Acc)) + 
+                      geom_point(size=2, alpha=0.5, aes(colour=Treatment), stroke=1) + 
+                      geom_hline(yintercept = GBLUP_acc[1, i], color="#F8766D")+
+                      geom_hline(yintercept = GBLUP_acc[2, i], color="#00BFC4") + 
+        theme_bw() +
+        scale_x_continuous(limits=c(1, 73), breaks=c(1,10,20,30,40,50,60,70))+
+                      labs(x="Metabolite", y="Prediction accuracy", title=paste0(trait_names[m]))+
+                      theme(legend.text = element_text(size = 12), plot.title = element_text(face="bold"))
+      m=m+1
+      # print(p[[i]])
+  }
+plot_Ave <- ggarrange(p[[1]],p[[2]],p[[3]], nrow = 3, ncol = 1, common.legend = TRUE)
+print(plot_Ave)
+dev.print(pdf, file = file.path(path.out, "./sc1.pdf"), height = 11, width = 11)
+
+
+
+## pair-wised t test for metabolites who have greater prediction accuracy-------
+
+# sc1 control minor axis.
+#Load GBLUP prediction accuracy results
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs/stress_GBLUP_GMBLUP.rda") 
+GBLUP_trt <- as.data.frame(corR1[1:25, ])
+load("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Prediction/outputs/control_GBLUP_GMBLUP.rda") 
+GBLUP_con <- as.data.frame(corR1[1:25, ])
+GBLUP.L <- list(Control=GBLUP_con, Stress=GBLUP_trt)
+
+### build function for t-pairwise one-tail test.---------
+tpair_func <- function(treatment, trait, scenario){
+              # treatment = treatments[1]
+              # trait=traits[2]
+              # scenario=scenarios[2]
+              
+              accL <- list()
+              for (i in 1:25){
+                accL[[i]] <-readRDS(paste0("./", treatment , "_", trait, "_cv", i, "/", scenario, "_all.rds"))
+              }
+              
+              acc_df <- as.data.frame(do.call(rbind, accL))
+              colnames(acc_df) <- names #change colnames into metabolite original names.
+              rownames(acc_df) <- 1:25 #change in CV=25.
+            
+            
+              multi.df <- acc_df
+              single.df <- GBLUP.L[[treatment]]
+              pval <- list()
+              pval2 <- list()
+              for (i in 1:73){
+                multi <- cbind.data.frame(CV=1:25, acc = multi.df[,i], group = "group1") #group1=multi
+                single <- cbind.data.frame(CV=1:25, acc=single.df[,trait], group="group2") #group2=single
+                pair = rbind.data.frame(multi, single)
+                pair$group <- as.factor(pair$group)
+                
+                fit = t.test(data=pair, acc~group, paired = TRUE, alternative = "greater")
+                fit2 = wilcox.test(data=pair, acc~group, paired = TRUE, alternative = "greater")
+                pval[[i]] <- fit$p.value
+                pval2[[i]] <- fit2$p.value
+              }
+              cat("t-test results: \n")
+              print(names[which(pval < 0.05)]) #print out metabolite names
+              # if(sum(pval < 0.05) != 0){
+              #   cat( "pval is ", pval[[which(pval<0.05)]], "\n") 
+              # }
+              
+              cat("wilcoxon t-test results: \n")
+              print(names[which(pval2 < 0.05)])
+              # if(sum(pval2 < 0.05) != 0){
+              #   cat( "pval is ", pval2[[which(pval2<0.05)]], "\n") 
+              # }
+              cat("\n")
+  
+}
+
+## 3. sc1 pair-wised t test for metabolites who have greater prediction accuracy ----------
+
+setwd("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Multi_trait/ARC_files/ARC_outputs/Multi_trait/outputs/sc1")
+tpair_func(treatment = "Control", trait = "MinorAxis", scenario = "scenario1")
+
+
+
+# Scenario2 -------
+## 0. Preprocessing for sc2 -------
+setwd("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Multi_trait/ARC_files/ARC_outputs/Multi_trait/outputs/Summary")
+sc2_names <- list.files(path="./", pattern = "scenario2")
+sc2L <- list()
+for(i in 1:6){
+  sc2L[[i]] <- readRDS(sc2_names[i])
+}
+names(sc2L) <- gsub("_scenario2.rds","",sc2_names)
+
+sc2.df <- do.call(rbind, sc2L)
+for(i in 1:6){
+  cat(rownames(sc2.df)[i], "\n")
+  print(table(sc2.df[i,] > GBLUP_acc[i]))
+  cat("\n")
+}
+
+
+majordf <- data.frame(Acc=c(sc2L$MajorAxis_Control, sc2L$MajorAxis_Stress), 
+                      Treatment = rep(c("Control", "Stress"), each = 73),
+                      Index = rep(names, 2),
+                      Order = rep(1:73, 2))
+minordf <- data.frame(Acc=c(sc2L$MinorAxis_Control, sc2L$MinorAxis_Stress), 
+                      Treatment = rep(c("Control", "Stress"), each = 73),
+                      Index = rep(names, 2),
+                      Order = rep(1:73, 2))
+perdf <- data.frame(Acc=c(sc2L$Perimeter_Control, sc2L$Perimeter_Stress), 
+                    Treatment = rep(c("Control", "Stress"), each = 73),
+                    Index = rep(names, 2), 
+                    Order = rep(1:73, 2))
+final_sc2_df <- list(majordf, minordf, perdf); names(final_sc2_df) <- traits
+
+## 1. list all the points lager than single-trait prediction.---------
+
+for(i in traits){
+  cat("In control group, for trait ", i,"\n the following metabolites who have greater multi-trait prediction accuracy than single-trait prediction \n")
+  con.df <- final_sc2_df[[i]] %>% filter(Treatment == "Control")
+  greater = which(con.df$Acc>GBLUP_acc[1,i])
+  if(length(greater) > 0){
+  for( t in greater){
+    temp = con.df$Index[t]
+    cat(" #", rownames(con.df)[t], " ") 
+    cat(temp,"\n")
+
+  }
+    cat(" =================== \n")
+}
+  cat("\n =============== \n")
+  cat("In stress group, for trait ", i,"\n the following metabolites who have greater multi-trait prediction accuracy than single-trait prediction \n")
+  trt.df <- final_sc2_df[[i]] %>% filter(Treatment == "Stress")
+  greater1 = which(trt.df$Acc>GBLUP_acc[2,i])
+  if(length(greater1)>0){
+  for( t1 in greater1){
+      temp1 = trt.df$Index[t1]
+      cat(" #",rownames(trt.df)[t1]," ") 
+      cat(temp1,"\n")
+  }
+    cat(" =================== \n")
+  }
+  cat("\n ================= \n")
+}
+
+## 2.draw plots for sc2 -----------
+p <- list()
+m=1
+for(i in traits){
+  p[[i]]<- ggplot(final_sc2_df[[i]], aes(x=Order, y=Acc)) + 
+    geom_point(size=2, alpha=0.5, aes(colour=Treatment), stroke=1) + 
+    geom_hline(yintercept = GBLUP_acc[1, i], color="#F8766D")+
+    geom_hline(yintercept = GBLUP_acc[2, i], color="#00BFC4") + 
+    theme_bw() +
+    scale_x_continuous(limits=c(1, 73), breaks=c(1,10,20,30,40,50,60,70))+
+    labs(x="Metabolite", y="Prediction accuracy", title=paste0(trait_names[m]))+
+    theme(legend.text = element_text(size = 12), plot.title = element_text(face="bold"))
+  
+  m=m+1
+  # print(p[[i]])
+}
+plot_Ave <- ggarrange(p[[1]],p[[2]],p[[3]], nrow = 3, ncol = 1, common.legend = TRUE)
+print(plot_Ave)
+dev.print(pdf, file = file.path(path.out, "./sc2.pdf"), height = 11, width = 11)
+
+
+## 3. sc2 pair-wised t test for metabolites who have greater prediction accuracy -------
+setwd("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Prediction/Multi_trait/ARC_files/ARC_outputs/Multi_trait/outputs/sc2")
+tpair_func(treatment = "Stress", trait = "MajorAxis", scenario = "scenario2")
+
+tpair_func(treatment = "Control", trait = "MinorAxis", scenario = "scenario2")
+
+tpair_func(treatment = "Stress", trait = "MinorAxis", scenario = "scenario2")
+
+tpair_func(treatment = "Control", trait = "Perimeter", scenario = "scenario2")
+
+```
+
