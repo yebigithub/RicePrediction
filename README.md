@@ -14,4 +14,5 @@ This repo contains all the codes used in Bi et al. (2022).
 - [.Rmd file](https://github.com/yebigithub/VTUNL_Rice/blob/main/Section5_Genomic_Prediction.Rmd)
 ## Section6 Multi-trait Genomic Prediction
 - [All_met folder](https://github.com/yebigithub/VTUNL_Rice/tree/main/all_mets) includes all the ARC Rscripts and .sh files.
+    sc1 means scenario1, sc2 means scenario2, con means control, trt means HNT stress.
 - [.Rmd file](Section6_Multi_trait_Genomic_Prediction.Rmd)
