@@ -13,7 +13,7 @@ This repo contains all the code used in Bi et al. (2022).
 ## Section5 Genomic Prediction
 - [.Rmd file](https://github.com/yebigithub/VTUNL_Rice/blob/main/Section5_Genomic_Prediction.Rmd)
 ## Section6 Multi-trait Genomic Prediction
-- [All_met](https://github.com/yebigithub/VTUNL_Rice/tree/main/all_mets) folder includes all the [Virginia Tech Advanced Research Computing](https://arc.vt.edu/) (ARC) R scripts and .sh files.
+- ["all_met"](https://github.com/yebigithub/VTUNL_Rice/tree/main/all_mets) folder includes all the [Virginia Tech Advanced Research Computing](https://arc.vt.edu/) (ARC) R scripts and .sh files.
     - Abbreviations include scenario1 (sc1), scenario2 (sc2), control (con), and HNT stress (trt).
    
 - [.Rmd file](Section6_Multi_trait_Genomic_Prediction.Rmd)
