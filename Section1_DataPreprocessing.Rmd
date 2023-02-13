@@ -24,6 +24,10 @@ majoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MajorAx
 majoraxis0 = majoraxis0[-which(majoraxis0$NSFTV_ID == 98), ]
 minoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MinorAxisLength_mean = mean(C_MinorAxisLength_mean))
 perimeter0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_Perimeter_mean = mean(C_Perimeter_mean))
+
+write.csv(majoraxis0, file = "grainlength.csv", quote = F, row.names = F)
+write.csv(minoraxis0, file = "grainwidth.csv", quote = F, row.names = F)
+write.csv(perimeter0, file = "grainperimeter.csv", quote = F, row.names = F)
 ```
 
 # 1. Metabolite data cleaning.
