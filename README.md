@@ -17,3 +17,5 @@ This repo contains all the code used in Bi et al. (2022).
     - Abbreviations include scenario1 (sc1), scenario2 (sc2), control (con), and HNT stress (trt).
    
 - [.Rmd file](Section6_Multi_trait_Genomic_Prediction.Rmd)
+## Section6 Subpopulation Analysis
+- [.Rmd file](https://github.com/yebigithub/VTUNL_Rice/blob/main/Section7_Subpop_Analysis.Rmd)
