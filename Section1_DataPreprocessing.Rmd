@@ -15,6 +15,17 @@ library(tidyverse)
 library(lme4)
 ```
 
+# 0. Grain-size phenotype data BLUE calculation
+```{r}
+wa_traits <- read.csv("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Trait/Waseem_trait/Rice_HNT_IMAGE_FINAL.csv")
+wa_traits$treatment = gsub("Control", "control", wa_traits$treatment)
+wa_traits$treatment = gsub("Stress", "stress", wa_traits$treatment)
+majoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MajorAxisLength_mean = mean(C_MajorAxisLength_mean))
+majoraxis0 = majoraxis0[-which(majoraxis0$NSFTV_ID == 98), ]
+minoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MinorAxisLength_mean = mean(C_MinorAxisLength_mean))
+perimeter0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_Perimeter_mean = mean(C_Perimeter_mean))
+```
+
 # 1. Metabolite data cleaning.
 - Keep "NSFTV.Id"  "Treatment" "Ext.batch" "Run" and 73 Metabolites
 - Remove NA, duplicated, no matched genotypes (NSFTV_ID). 
