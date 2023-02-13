@@ -1,0 +1,372 @@
+---
+title: "GBLUP_MBLUP_GMBLUP_Subpop"
+author: "Ye Bi"
+date: "2023-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "~/OneDrive - Virginia Tech/Research/Codes/research/RiceUNLMetabolites/Prediction/all_mets/HeatmapPCA")
+path.met = "../../../Pheno"
+path.trait = "../../../Trait"
+path.geno = "../../../Geno"
+path.output = "./outputs"
+```
+
+### loading packages
+```{r, message=F}
+# library(rrBLUP)
+library(BGLR)
+library(devtools)
+library(ggbiplot)
+library(pheatmap)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggfortify)#draw pca plots
+library(data.table)
+```
+
+```{r}
+met_names <- read.delim("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Pheno/raw_data/met_names.txt", header=FALSE)
+names <- met_names$V1
+```
+
+## Read met data.
+```{r}
+met.con <- read.csv(file=file.path(path.met, "met.rr.con.csv")) #192*75 n
+colnames(met.con)[-c(1:2)] = names
+met.trt <- read.csv(file=file.path(path.met, "met.rr.trt.csv")) #188*75
+colnames(met.trt)[-c(1:2)] = names
+```
+
+## Read traits data
+```{r}
+load(file=file.path(path.trait, "trait.con.Rdata"))
+load(file=file.path(path.trait, "trait.trt.Rdata"))
+# trait.con$NSFTV_ID <- as.factor(trait.con$NSFTV_ID)
+# trait.trt$NSFTV_ID <- as.factor(trait.trt$NSFTV_ID)
+```
+
+## Read geno data.
+
+```{r}
+load(file=file.path(path.geno, "geno.rr.con.RData")) # 192 385118
+load(file=file.path(path.geno, "geno.rr.trt.RData")) # 188 389854
+```
+
+## G matrix and M matrix
+### control
+```{r, eval = F}
+# G matrix
+Gcs.con = scale(geno_con, center = T, scale = T)
+Gchnt.con = tcrossprod(Gcs.con)/ncol(Gcs.con)
+
+# M matrix
+rownames(met.con) = met.con$NSFTV_ID
+Mcs.con = scale(met.con[,-c(1:2)]) 
+Mchnt.con = tcrossprod(Mcs)/ncol(Mcs.con)# for Bayesian MBLUP
+```
+
+### HNT
+```{r, eval = F}
+# G matrix
+Gcs.trt = scale(geno_trt, center = T, scale = T)
+Gchnt.trt = tcrossprod(Gcs.trt)/ncol(Gcs.trt)
+
+# M matrix
+rownames(met.trt) = met.trt$NSFTV_ID
+Mcs.trt = scale(met.trt[,-c(1:2)]) 
+Mchnt.trt = tcrossprod(Mcs.trt)/ncol(Mcs.trt)# for Bayesian MBLUP
+```
+
+## sub info
+```{r}
+#read into subpop info
+panel_info_clean <- read.delim("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Geno/raw_data/panel_info_clean.txt")
+subpop <- panel_info_clean %>% filter(Sample.set == "RDP1")
+subpop$Other.accession.ID = gsub("NSFTV", "NSFTV_", subpop$Other.accession.ID)
+
+table(subpop$Other.accession.ID %in% trait.con$NSFTV_ID)
+table(subpop$Other.accession.ID %in% trait.trt$NSFTV_ID) #188
+table(trait.con$NSFTV_ID %in% subpop$Other.accession.ID) #all in suspop txt file.
+table(trait.trt$NSFTV_ID %in% subpop$Other.accession.ID)  #all
+```
+
+## Function for combine geno and subpop in one dataframe.
+```{r, eval = F}
+pca_sub_func=function(trait){
+            pop.df = subpop[subpop$Other.accession.ID %in% trait$NSFTV_ID,]
+            pop.df = data.frame(NSFTV_ID = pop.df$Other.accession.ID,
+                                Subpopu = pop.df$fastStructure.subpopulation.call)
+            pop.df = pop.df %>% arrange(NSFTV_ID)
+}
+
+pop.df.con = pca_sub_func(trait.con)
+pop.df.trt = pca_sub_func(trait.trt)
+save(pop.df.con, pop.df.trt, file=file.path(path.output, "pop.df.rr.RData"))
+
+#check if ids are in order
+table(pop.df.con$NSFTV_ID == trait.con$NSFTV_ID)
+table(pop.df.trt$NSFTV_ID == trait.trt$NSFTV_ID)
+```
+
+
+
+### Conventional H2
+```{r}
+library(lme4)
+library(readxl)
+Grain_Size <- read_excel("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Trait/Waseem_trait/Grain_Size_HNT_JS.xlsx", 
+    sheet = "AllSeeds")
+colnames(Grain_Size)[2] = "GSOR.ID"
+Grain_Size$GSOR.ID = paste0("GSOR", Grain_Size$GSOR.ID)
+Grain_size.con = Grain_Size[Grain_Size$Treatment == "C", ]
+Grain_size.trt = Grain_Size[Grain_Size$Treatment == "S", ]
+
+Grain_size.rep.con = Grain_size.con%>%group_by(GSOR.ID) %>% summarise(nn = length(unique(PlantNo.)))
+rep.con = mean(Grain_size.rep.con$nn)
+Grain_size.rep.trt = Grain_size.trt%>%group_by(GSOR.ID) %>% summarise(nn = length(unique(PlantNo.)))
+rep.trt = mean(Grain_size.rep.trt$nn)
+
+##### Control
+Grain_size.con$GSOR.ID = as.factor(Grain_size.con$GSOR.ID)
+Grain_size.con$PlantNo. = as.factor(Grain_size.con$PlantNo.)
+traits = c("MajorAxisLength", "MinorAxisLength", "Perimeter")
+for (i in 1:3){
+formu = as.formula(paste0(traits[i],"~ 1 + (1|GSOR.ID) + PlantNo."))
+fit.lme = lmer(formula = formu, data = Grain_size.con)
+summary(fit.lme)
+temp = as.data.frame(VarCorr(fit.lme))
+
+H2 = temp[1,4]/(temp[1,4]+temp[2,4]/rep.con)
+print(round(H2, 2))
+}
+
+##### Stress
+Grain_size.trt$GSOR.ID = as.factor(Grain_size.trt$GSOR.ID)
+Grain_size.trt$PlantNo. = as.factor(Grain_size.trt$PlantNo.)
+traits = c("MajorAxisLength", "MinorAxisLength", "Perimeter")
+for (i in 1:3){
+formu = as.formula(paste0(traits[i],"~ 1 + (1|GSOR.ID) + PlantNo."))
+fit.lme = lmer(formula = formu, data = Grain_size.trt)
+summary(fit.lme)
+temp = as.data.frame(VarCorr(fit.lme))
+
+H2 = temp[1,4]/(temp[1,4]+temp[2,4]/rep.trt)
+print(round(H2, 2))
+}
+```
+
+
+##### Drawing PCA plots for subpopulation information
+### loading packages
+```{r, message=F}
+# library(rrBLUP)
+# library(BGLR)
+library(devtools)
+library(ggbiplot)
+library(pheatmap)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggfortify)#draw pca plots
+library(data.table)
+```
+
+```{r}
+met_names <- read.delim("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Pheno/raw_data/met_names.txt", header=FALSE)
+names <- met_names$V1
+```
+
+## Read met data.
+```{r}
+met.con <- read.csv(file=file.path(path.met, "met.rr.con.csv")) #192*75
+colnames(met.con)[-c(1:2)] = names
+met.trt <- read.csv(file=file.path(path.met, "met.rr.trt.csv")) #188*75
+colnames(met.trt)[-c(1:2)] = names
+```
+
+## Read traits data
+```{r}
+load(file=file.path(path.trait, "trait.con.Rdata"))
+load(file=file.path(path.trait, "trait.trt.Rdata"))
+trait.con$NSFTV_ID <- as.factor(trait.con$NSFTV_ID)
+trait.trt$NSFTV_ID <- as.factor(trait.trt$NSFTV_ID)
+```
+
+## Read geno data.
+
+```{r}
+load(file=file.path(path.geno, "geno.rr.con.RData")) # 192 385118
+load(file=file.path(path.geno, "geno.rr.trt.RData")) # 188 389854
+```
+```{r}
+## Read into raw genotype data.
+geno_700k <- readRDS(file = file.path(path.geno, "/raw_data/geno_final_700K.rds")) #SNPs
+map <- readRDS(file=file.path(path.geno, "/raw_data/mapinfo_final_700k.rds")) #map
+SNP_names <- map$V2
+colnames(geno_700k) = SNP_names
+
+id_comb = unique(c(rownames(geno_con), rownames(geno_trt))) #219
+
+geno_comb <- geno_700k[id_comb,] # 219 411066
+#MAF check
+p <- colMeans(geno_comb)/2
+maf <- ifelse(p> 0.5, 1-p, p)
+maf.index <- which(maf < 0.05) 
+geno_comb <- geno_comb[,-maf.index] # 219 388099
+# save(geno_comb, file="./PCA_subpop_outputs/geno.rr.comb.RData")
+```
+
+## G matrix and M matrix
+```{r}
+# G matrix
+Gcs = scale(geno_comb, center = T, scale = T)
+Gchnt = tcrossprod(Gcs)/ncol(Gcs)
+```
+
+## Control
+```{r}
+# M matrix
+rownames(met.con) = met.con$NSFTV_ID
+Mcs.con = scale(met.con[,-c(1:2)]) 
+Mchnt.con = tcrossprod(Mcs.con)/ncol(Mcs.con)# for Bayesian MBLUP
+```
+
+## HNT
+```{r}
+# M matrix
+rownames(met.trt) = met.trt$NSFTV_ID
+Mcs.trt = scale(met.trt[,-c(1:2)]) 
+Mchnt.trt = tcrossprod(Mcs.trt)/ncol(Mcs.trt)# for Bayesian MBLUP
+```
+
+## sub info
+```{r}
+#read into subpop info
+panel_info_clean <- read.delim("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Geno/raw_data/panel_info_clean.txt")
+subpop <- panel_info_clean %>% filter(Sample.set == "RDP1")
+subpop$Other.accession.ID = gsub("NSFTV", "NSFTV_", subpop$Other.accession.ID)
+
+table(subpop$Other.accession.ID %in% rownames(geno_comb))
+table(rownames(geno_comb) %in% subpop$Other.accession.ID) #all in suspop txt file.
+```
+
+## Function for combine geno and subpop in one dataframe.
+```{r}
+pca_sub_func=function(geno, Gchnt){
+            pop.df = subpop[subpop$Other.accession.ID %in% rownames(geno),]
+            pop.df = data.frame(NSFTV_ID = pop.df$Other.accession.ID,
+                                  Subpopu = pop.df$fastStructure.subpopulation.call)
+
+            G.df = data.frame(NSFTV_ID = rownames(Gchnt), Gchnt)
+            G.suspop = merge(G.df, pop.df)
+            return(G.suspop)
+            }
+```
+
+```{r}
+G.suspop = pca_sub_func(geno = geno_comb, Gchnt = Gchnt)
+table(G.suspop$Subpopu)
+```
+#control
+```{r, echo = TRUE, eval=TRUE}
+G.suspop$Subpopulation = G.suspop$Subpopu
+
+cc.pca = prcomp(G.suspop[,-c(1,221,222)], scale. = T)
+
+autoplot(cc.pca, data = G.suspop, colour = "Subpopulation") + 
+  theme_bw()
+dev.print(pdf, file = file.path(path.output, "./pca_geno_comb.pdf"), height = 6, width = 8)
+```
+
+#stress
+```{r}
+G.trt.suspop = pca_sub_func(geno = geno_trt, Gchnt = Gchnt.trt)
+table(G.trt.suspop$Subpopu)
+```
+
+```{r, echo = TRUE, eval=TRUE}
+cc.pca = prcomp(G.trt.suspop[,-c(1,190)], scale. = T)
+autoplot(cc.pca, data = G.trt.suspop, colour = "Subpopu") +
+  theme_bw()
+dev.print(pdf, file = file.path(path.output, "./pca_geno_stress.pdf"), height = 6, width = 8)
+```
+
+#control--M
+```{r}
+
+M.con.suspop = pca_sub_func(geno = met.con[,-c(1:2)], Gchnt = Mchnt.con)
+table(M.con.suspop$Subpopu)
+```
+
+### follow reviewers' suggestions to compare top 5 ids, but not include in manuscript
+```{r}
+table(trait.con$NSFTV_ID %in% trait.trt$NSFTV_ID)
+table(trait.trt$NSFTV_ID %in% trait.con$NSFTV_ID)
+
+trait.con.shared = trait.con[trait.con$NSFTV_ID %in% trait.trt$NSFTV_ID, ] #161 5
+trait.trt.shared = trait.trt[trait.trt$NSFTV_ID %in% trait.con$NSFTV_ID, ] #161 5
+
+
+all(trait.con.shared$NSFTV_ID == trait.trt.shared$NSFTV_ID)
+
+trait.diff = data.frame(NSFTV_ID = trait.con.shared$NSFTV_ID, abs((trait.con.shared[,-c(1:2)] - trait.trt.shared[,-c(1:2)])/trait.trt.shared[,-c(1:2)] * 100))
+
+summary(trait.diff)
+
+major_order = trait.diff[order(trait.diff$MajorAxis, decreasing = T), ]
+major_top_id = major_order$NSFTV_ID[1:5]
+  
+minor_order = trait.diff[order(trait.diff$MinorAxis, decreasing = T), ]
+minor_top_id = minor_order$NSFTV_ID[1:5]
+
+perimeter_order = trait.diff[order(trait.diff$Perimeter, decreasing = T), ]
+perimeter_top_id = perimeter_order$NSFTV_ID[1:5]
+```
+
+##MajorAxis
+```{r}
+met.con.top5.major = met.con[met.con$NSFTV_ID %in% major_top_id, -c(1:2)]
+met.trt.top5.major = met.trt[met.trt$NSFTV_ID %in% major_top_id, -c(1:2)]
+
+for( i in 1:5){
+  cat("Corr is: ", cor(as.numeric(met.con.top5.major[i, ]), as.numeric(met.trt.top5.major[i, ])), "\n")
+  t_test = t.test(as.numeric(met.con.top5.major[i, ]),
+                  as.numeric(met.trt.top5.major[i, ]),
+                  paired = TRUE)
+  cat("t-test p-value: ", t_test$p.value, "\n")
+}
+```
+
+##MinorAxis
+```{r}
+met.con.top5.minor = met.con[met.con$NSFTV_ID %in% minor_top_id, -c(1:2)]
+met.trt.top5.minor = met.trt[met.trt$NSFTV_ID %in% minor_top_id, -c(1:2)]
+
+for( i in 1:5){
+  cat("Corr is: ", cor(as.numeric(met.con.top5.minor[i, ]), as.numeric(met.trt.top5.minor[i, ])), "\n")
+  t_test = t.test(as.numeric(met.con.top5.minor[i, ]),
+                  as.numeric(met.trt.top5.minor[i, ]),
+                  paired = TRUE)
+  cat("t-test p-value: ", t_test$p.value, "\n")
+}
+```
+
+##Perimeter
+```{r}
+met.con.top5.perimeter = met.con[met.con$NSFTV_ID %in% perimeter_top_id, -c(1:2)]
+met.trt.top5.perimeter = met.trt[met.trt$NSFTV_ID %in% perimeter_top_id, -c(1:2)]
+
+for( i in 1:5){
+  cat("Corr is: ", cor(as.numeric(met.con.top5.perimeter[i, ]), as.numeric(met.trt.top5.perimeter[i, ])), "\n")
+  t_test = t.test(as.numeric(met.con.top5.perimeter[i, ]),
+                  as.numeric(met.trt.top5.perimeter[i, ]),
+                  paired = TRUE)
+  cat("t-test p-value: ", t_test$p.value, "\n")
+}
+```
+
+
