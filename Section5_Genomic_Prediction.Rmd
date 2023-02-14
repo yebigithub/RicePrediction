@@ -507,7 +507,7 @@ dev.print(pdf, file = file.path(path.output, "GBLUP_MBLUP_GMBLUP_comb.pdf"), hei
 library(vegan)
 G1 = dist(Gchnt)
 M1 = dist(Mchnt)
-mantel(M1, M1, method="pearson", permutations=999, strata = NULL,
+mantel(M1, G1, method="pearson", permutations=999, strata = NULL,
 na.rm = FALSE)
 ```
 
