@@ -17,13 +17,53 @@ library(lme4)
 
 # 0. Grain-size phenotype data BLUE calculation
 ```{r}
-wa_traits <- read.csv("~/Library/CloudStorage/OneDrive-VirginiaTech/Research/Codes/research/RiceUNLMetabolites/Trait/Waseem_trait/Rice_HNT_IMAGE_FINAL.csv")
-wa_traits$treatment = gsub("Control", "control", wa_traits$treatment)
-wa_traits$treatment = gsub("Stress", "stress", wa_traits$treatment)
-majoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MajorAxisLength_mean = mean(C_MajorAxisLength_mean))
-majoraxis0 = majoraxis0[-which(majoraxis0$NSFTV_ID == 98), ]
-minoraxis0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_MinorAxisLength_mean = mean(C_MinorAxisLength_mean))
-perimeter0 = wa_traits %>% group_by(treatment, NSFTV_ID) %>% summarise(C_Perimeter_mean = mean(C_Perimeter_mean))
+grain_size <- read.csv("./dataset/raw_grain_size.csv")
+
+traits.L = grain_size %>% group_split(Treatment)
+traits.con = traits.L[[1]]
+traits.trt = traits.L[[2]]
+colnames(traits.con)
+BLUE_func <- function(traits, trait, treatment){
+                  traits$NSFTV_ID <- as.factor(traits$NSFTV_ID)
+                  traits$replication <- as.factor(traits$PlantNo.)
+                  form = as.formula(paste0(trait,"~-1 + replication + NSFTV_ID"))
+                  fit_fix = lm(form, data = traits)
+                  # summary(fit_fix)
+                  blue = fit_fix$coefficients
+                  
+                  if(treatment == "control"){
+                    blue1 = blue[-c(1:8)] #remove replications
+                    }else{
+                      blue1 = blue[-c(1:7)]
+                    }
+                  blue1 = c(NSFTV_ID1 = 0, blue1)
+                  names(blue1) = gsub("NSFTV_ID", "", names(blue1))
+                  blue.df = data.frame(treatment = treatment, 
+                                       NSFTV_ID = names(blue1),
+                                       blue = blue1)
+                  return(blue.df)
+                  }
+
+majoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
+                                        trait = "MajorAxisLength", 
+                                        treatment = "control"),
+                              BLUE_func(traits = traits.trt, 
+                                        trait = "MajorAxisLength", 
+                                        treatment = "stress"))
+
+minoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
+                                        trait = "MinorAxisLength", 
+                                        treatment = "control"),
+                              BLUE_func(traits = traits.trt, 
+                                        trait = "MinorAxisLength", 
+                                        treatment = "stress"))
+
+perimeter0 = rbind.data.frame(BLUE_func(traits = traits.con, 
+                                        trait = "Perimeter", 
+                                        treatment = "control"),
+                              BLUE_func(traits = traits.trt, 
+                                        trait = "Perimeter", 
+                                        treatment = "stress"))
 
 write.csv(majoraxis0, file = "grainlength.csv", quote = F, row.names = F)
 write.csv(minoraxis0, file = "grainwidth.csv", quote = F, row.names = F)
