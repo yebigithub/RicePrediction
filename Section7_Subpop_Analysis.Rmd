@@ -115,52 +115,6 @@ table(pop.df.trt$NSFTV_ID == trait.trt$NSFTV_ID)
 ```
 
 
-
-### Conventional H2
-```{r}
-Grain_Size <- read.csv("./dataset/raw_grain_size.csv")
-colnames(Grain_Size)[2] = "GSOR.ID"
-Grain_Size$GSOR.ID = paste0("GSOR", Grain_Size$GSOR.ID)
-Grain_size.con = Grain_Size[Grain_Size$Treatment == "C", ]
-Grain_size.trt = Grain_Size[Grain_Size$Treatment == "S", ]
-Grain_size.rep.con = Grain_size.con%>%group_by(GSOR.ID) %>% summarise(nn = length(unique(PlantNo.)))
-rep.con = mean(Grain_size.rep.con$nn)
-Grain_size.rep.trt = Grain_size.trt%>%group_by(GSOR.ID) %>% summarise(nn = length(unique(PlantNo.)))
-rep.trt = mean(Grain_size.rep.trt$nn)
-##### Control
-Grain_size.con$GSOR.ID = as.factor(Grain_size.con$GSOR.ID)
-Grain_size.con$PlantNo. = as.factor(Grain_size.con$PlantNo.)
-traits = c("MajorAxisLength", "MinorAxisLength", "Perimeter")
-for (i in 1:3){
-formu = as.formula(paste0(traits[i],"~ 1 + (1|GSOR.ID) + (1|PlantNo.)"))
-fit.lme = lmer(formula = formu, data = Grain_size.con)
-summary(fit.lme)
-temp = as.data.frame(VarCorr(fit.lme))
-H2 = temp[1,4]/(temp[1,4]+temp[3,4]/rep.con+temp[2,4])
-print(round(H2, 2))
-}
-
-##### Stress
-Grain_size.trt$GSOR.ID = as.factor(Grain_size.trt$GSOR.ID)
-Grain_size.trt$PlantNo. = as.factor(Grain_size.trt$PlantNo.)
-traits = c("MajorAxisLength", "MinorAxisLength", "Perimeter")
-for (i in 1:3){
-formu = as.formula(paste0(traits[i],"~ 1 + (1|GSOR.ID) + (1|PlantNo.)"))
-fit.lme = lmer(formula = formu, data = Grain_size.trt)
-summary(fit.lme)
-temp = as.data.frame(VarCorr(fit.lme))
-H2 = temp[1,4]/(temp[1,4]+temp[3,4]/rep.con+temp[2,4])
-print(round(H2, 2))
-}
-```
-
-[1] 0.71
-[1] 0.64
-[1] 0.5
-[1] 0.74
-[1] 0.73
-[1] 0.54
-
 ##### Drawing PCA plots for subpopulation information
 ### loading packages
 ```{r, message=F}

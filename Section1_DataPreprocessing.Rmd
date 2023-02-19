@@ -19,13 +19,13 @@ library(lme4)
 ```{r}
 grain_size <- read.csv("./dataset/raw_grain_size.csv")
 
-traits.L = grain_size %>% group_split(Treatment)
+traits.L = grain_size %>% group_split(treatment)
 traits.con = traits.L[[1]]
 traits.trt = traits.L[[2]]
 colnames(traits.con)
 BLUE_func <- function(traits, trait, treatment){
                   traits$NSFTV_ID <- as.factor(traits$NSFTV_ID)
-                  traits$replication <- as.factor(traits$PlantNo.)
+                  traits$replication <- as.factor(traits$replication)
                   form = as.formula(paste0(trait,"~-1 + replication + NSFTV_ID"))
                   fit_fix = lm(form, data = traits)
                   # summary(fit_fix)
@@ -45,24 +45,24 @@ BLUE_func <- function(traits, trait, treatment){
                   }
 
 majoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "MajorAxisLength", 
+                                        trait = "C_MajorAxisLength_mean", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "MajorAxisLength", 
+                                        trait = "C_MajorAxisLength_mean", 
                                         treatment = "stress"))
 
 minoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "MinorAxisLength", 
+                                        trait = "C_MinorAxisLength_mean", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "MinorAxisLength", 
+                                        trait = "C_MinorAxisLength_mean", 
                                         treatment = "stress"))
 
 perimeter0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "Perimeter", 
+                                        trait = "C_Perimeter_mean", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "Perimeter", 
+                                        trait = "C_Perimeter_mean", 
                                         treatment = "stress"))
 
 write.csv(majoraxis0, file = "grainlength.csv", quote = F, row.names = F)
