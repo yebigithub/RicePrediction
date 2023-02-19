@@ -45,24 +45,24 @@ BLUE_func <- function(traits, trait, treatment){
                   }
 
 majoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "C_MajorAxisLength_mean", 
+                                        trait = "C_MajorAxisLength", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "C_MajorAxisLength_mean", 
+                                        trait = "C_MajorAxisLength", 
                                         treatment = "stress"))
-
+majoraxis0 = majoraxis0[!majoraxis0$NSFTV_ID == "98", ]
 minoraxis0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "C_MinorAxisLength_mean", 
+                                        trait = "C_MinorAxisLength", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "C_MinorAxisLength_mean", 
+                                        trait = "C_MinorAxisLength", 
                                         treatment = "stress"))
 
 perimeter0 = rbind.data.frame(BLUE_func(traits = traits.con, 
-                                        trait = "C_Perimeter_mean", 
+                                        trait = "C_Perimeter", 
                                         treatment = "control"),
                               BLUE_func(traits = traits.trt, 
-                                        trait = "C_Perimeter_mean", 
+                                        trait = "C_Perimeter", 
                                         treatment = "stress"))
 
 write.csv(majoraxis0, file = "grainlength.csv", quote = F, row.names = F)
