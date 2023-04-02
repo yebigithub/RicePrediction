@@ -1,6 +1,6 @@
 # Evaluating metabolic and genomic data for predicting grain traits under high night temperature stress in rice 
 
-This repo contains all the code used in Bi et al. (2022).
+This repo contains all the code used in [Bi et al. (2022)](https://doi.org/10.1093/g3journal/jkad052).
 
 ## Section1 Data Preprocessing
 - [.Rmd file](https://github.com/yebigithub/VTUNL_Rice/blob/main/Section1_DataPreprocessing.Rmd)
